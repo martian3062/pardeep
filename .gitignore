@@ -1,0 +1,30 @@
+# Personal data — NEVER commit
+data/
+*.gguf
+*.env
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local tooling
+.kilocode/
+.claude/settings.local.json
+
+# Model / cache artifacts (live in E:\cache, but just in case)
+*.ckpt
+*.safetensors
+*.pt
+*.onnx
+
+# OS
+Thumbs.db
+desktop.ini

@@ -1,0 +1,38 @@
+# Pardeep_Self configuration
+# Names that identify YOU in chat exports (as they appear in WhatsApp export lines).
+# Add every variant WhatsApp ever used for you (e.g. "Pardeep", "Pardeep Kumar", "You").
+me_names:
+  - Pardeep
+
+whatsapp:
+  # India-style dates (dd/mm/yy). Parser auto-detects when possible; this is the fallback.
+  dayfirst: true
+
+transcription:
+  # faster-whisper model: large-v3 (best, ~3.2GB VRAM int8) | medium | small
+  model: large-v3
+  # null = auto-detect language per file (handles Hindi/English code-switching)
+  language: null
+
+diarization:
+  # Gated models: accept terms on huggingface.co for BOTH
+  # pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0,
+  # then put HF_TOKEN=... in .env
+  model: pyannote/speaker-diarization-3.1
+  embedding_model: pyannote/wespeaker-voxceleb-resnet34-LM
+  # cosine similarity vs your enrolled voice; below this no speaker is labeled 'me'
+  similarity_threshold: 0.40
+  # consecutive same-speaker segments closer than this merge into one message
+  merge_gap_sec: 2.0
+  # voice notes shorter than this are skipped during enrollment (bad embeddings)
+  min_enroll_sec: 3.0
+  max_enroll_files: 150
+
+tts:
+  # N longest voice notes copied to tts_reference_dir for voice cloning
+  reference_clips: 12
+
+paths:
+  db: data/processed/messages.db
+  tts_reference_dir: data/processed/tts_reference
+  voice_profile: data/processed/me_voice.npy
