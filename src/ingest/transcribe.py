@@ -26,7 +26,21 @@ def iter_audio_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.suffix.lower() in AUDIO_EXTS)
 
 
-def load_model(model_size: str = "large-v3-turbo"):
+# Whisper mislabels romanized Hindi/Punjabi phone audio as neighbouring or
+# unrelated languages; collapse those onto what the user actually speaks.
+LANG_MAP = {"ur": "hi", "sa": "hi", "ne": "hi", "mr": "hi", "bn": "hi", "gu": "hi"}
+ALLOWED_LANGS = {"en", "hi", "pa"}
+
+
+def language_hint(detected: str | None) -> str | None:
+    """Map a previous auto-detection onto a forced language, or None to re-detect."""
+    if not detected:
+        return None
+    lang = LANG_MAP.get(detected, detected)
+    return lang if lang in ALLOWED_LANGS else None
+
+
+def load_model(model_size: str = "large-v3"):
     from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     try:
@@ -38,13 +52,20 @@ def load_model(model_size: str = "large-v3-turbo"):
     return BatchedInferencePipeline(model)
 
 
-def transcribe_file(model, path: Path, language: str | None = None):
+def transcribe_file(model, path: Path, language: str | None = None, batch_size: int = 8):
+    """Compressed phone audio makes Whisper hallucinate: it loops phrases and
+    emits 'foreign'/boilerplate on unintelligible speech. These thresholds make
+    it drop a decode and retry at a higher temperature instead of looping."""
     segments, info = model.transcribe(
         str(path),
         language=language,
         vad_filter=True,
         beam_size=5,
-        batch_size=8,
+        batch_size=batch_size,
+        temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        compression_ratio_threshold=2.4,  # repetition detector
+        log_prob_threshold=-1.0,  # low-confidence decode -> retry
+        no_speech_threshold=0.6,  # silence -> emit nothing
     )
     return [(s.start, s.end, s.text.strip()) for s in segments], info
 
@@ -105,9 +126,17 @@ def ingest_voice_notes(
 
 
 def ingest_calls(
-    conn: sqlite3.Connection, root: Path, model_size: str, language: str | None
+    conn: sqlite3.Connection,
+    root: Path,
+    model_size: str,
+    language: str | None,
+    lang_hints: dict[str, str] | None = None,
 ) -> tuple[int, int]:
-    """Returns (files_processed, segments_inserted)."""
+    """Returns (files_processed, segments_inserted).
+
+    lang_hints maps audio path -> language detected on an earlier pass; forcing
+    it beats re-detecting on noisy phone audio.
+    """
     files = iter_audio_files(root)
     if not files:
         console.print(f"[yellow]No audio files under {root}[/yellow]")
@@ -119,8 +148,9 @@ def ingest_calls(
         if db.already_ingested(conn, path, sha):
             continue
         db.record_file(conn, path, sha, -1)  # claim first — see ingest_voice_notes
+        forced = language or language_hint((lang_hints or {}).get(str(path)))
         try:
-            segs, info = transcribe_file(model, path, language)
+            segs, info = transcribe_file(model, path, forced)
         except Exception as exc:
             console.print(f"  [yellow]skipped {path.name}: {exc}[/yellow]")
             db.record_file(conn, path, sha, 0)

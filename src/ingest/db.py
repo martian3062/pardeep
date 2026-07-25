@@ -162,6 +162,37 @@ def fetch_segments(conn: sqlite3.Connection, audio_ref: str) -> list[sqlite3.Row
     ).fetchall()
 
 
+def call_language_map(conn: sqlite3.Connection) -> dict[str, str]:
+    """Most common detected language per call file, from the current transcripts."""
+    rows = conn.execute(
+        """SELECT audio_ref, lang, COUNT(*) n FROM call_segments
+           WHERE lang IS NOT NULL GROUP BY audio_ref, lang ORDER BY n DESC"""
+    )
+    out: dict[str, str] = {}
+    for row in rows:
+        out.setdefault(row["audio_ref"], row["lang"])
+    return out
+
+
+def reset_call_transcripts(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Drop all call transcripts + their file records so calls re-transcribe.
+    Diarization embedding caches are keyed by audio path and stay valid."""
+    segs = conn.execute("DELETE FROM call_segments").rowcount
+    conn.execute("DELETE FROM messages WHERE source = 'call'")
+    files = conn.execute("DELETE FROM ingest_files WHERE path LIKE '%\\calls\\%'").rowcount
+    conn.commit()
+    return segs, files
+
+
+def reset_call_labels(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Clear diarization results so labeling can be re-run from cached embeddings.
+    Returns (segments_unlabeled, messages_deleted)."""
+    segs = conn.execute("UPDATE call_segments SET speaker = NULL").rowcount
+    msgs = conn.execute("DELETE FROM messages WHERE source = 'call'").rowcount
+    conn.commit()
+    return segs, msgs
+
+
 def label_segments(conn: sqlite3.Connection, labels: Iterable[tuple[str, int]]) -> None:
     """labels: (speaker, segment_id) pairs."""
     conn.executemany("UPDATE call_segments SET speaker = ? WHERE id = ?", list(labels))

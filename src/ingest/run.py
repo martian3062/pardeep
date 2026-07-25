@@ -96,16 +96,46 @@ def enroll(
 
 
 @app.command()
-def diarize():
+def diarize(
+    relabel: bool = typer.Option(
+        False, "--relabel", help="Redo labeling of ALL calls from cached embeddings"
+    ),
+):
     """Label pending call segments me/other and promote them into messages."""
     from . import diarize as dz
 
     cfg = load_config()
     conn = dbm.connect(db_path(cfg))
+    if relabel:
+        segs, msgs = dbm.reset_call_labels(conn)
+        console.print(f"[yellow]Reset {segs} segment labels, removed {msgs} messages[/yellow]")
     files, promoted = dz.diarize_calls(conn, cfg)
     console.print(
         f"[bold green]Done: {files} calls labeled, {promoted} messages promoted[/bold green]"
     )
+
+
+@app.command()
+def retranscribe(
+    path: Path = typer.Argument(Path("data/raw/calls"), help="Call recordings directory"),
+):
+    """Re-transcribe all calls with anti-hallucination settings + language hints
+    carried over from the previous pass. Diarization caches are preserved."""
+    from . import transcribe as tr
+
+    cfg = load_config()
+    conn = dbm.connect(db_path(cfg))
+    hints = dbm.call_language_map(conn)
+    segs, files = dbm.reset_call_transcripts(conn)
+    console.print(
+        f"[yellow]Cleared {segs} segments from {files} call files; "
+        f"carrying {len(hints)} language hints forward[/yellow]"
+    )
+    n_files, items = tr.ingest_calls(
+        conn, path, cfg["transcription"]["model"], cfg["transcription"].get("language"), hints
+    )
+    console.print(f"[bold green]Done: {n_files} files, {items} segments[/bold green]")
+    console.print("[dim]Next: python -m src.ingest.run diarize (re-labels from cache)[/dim]")
 
 
 @app.command()

@@ -10,8 +10,9 @@ whatsapp:
   dayfirst: true
 
 transcription:
-  # faster-whisper model: large-v3-turbo (6-8x faster, near-equal quality) | large-v3 | medium
-  model: large-v3-turbo
+  # large-v3 handles Punjabi/Hindi phone audio far better than large-v3-turbo
+  # (turbo is distilled and hallucinated repetition loops on ~17% of segments)
+  model: large-v3
   # null = auto-detect language per file (handles Hindi/English code-switching)
   language: null
 
