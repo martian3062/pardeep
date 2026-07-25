@@ -21,11 +21,17 @@ from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
+from dotenv import load_dotenv
 from rich.console import Console
 
 from ..config import REPO_ROOT
+
+load_dotenv(REPO_ROOT / ".env")
+# pyannote 3.x checkpoints predate torch 2.6's weights_only default; they are
+# official trusted models, so allow the legacy load path.
+os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
 from . import db
-from .audio_io import TARGET_SR, duration_sec, load_audio
+from .audio_io import TARGET_SR, duration_sec, load_audio_isolated as load_audio
 from .transcribe import file_timestamp, iter_audio_files
 
 console = Console()
@@ -127,11 +133,15 @@ def enroll(voice_notes_dir: Path, cfg: dict) -> Path:
     embeddings: list[np.ndarray] = []
     durations: list[tuple[float, Path]] = []
     for path in files[: dcfg["max_enroll_files"]]:
-        wav = load_audio(path)
-        dur = duration_sec(wav)
-        if dur < dcfg["min_enroll_sec"]:
+        try:
+            wav = load_audio(path)
+            dur = duration_sec(wav)
+            if dur < dcfg["min_enroll_sec"]:
+                continue
+            emb = _embed(inference, wav)
+        except Exception as exc:
+            console.print(f"  [yellow]skipped {path.name}: {exc}[/yellow]")
             continue
-        emb = _embed(inference, wav)
         embeddings.append(emb / np.linalg.norm(emb))
         durations.append((dur, path))
         console.print(f"  enrolled {path.name} ({dur:.1f}s)")

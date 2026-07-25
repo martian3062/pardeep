@@ -26,16 +26,16 @@ def iter_audio_files(root: Path) -> list[Path]:
     return sorted(p for p in root.rglob("*") if p.suffix.lower() in AUDIO_EXTS)
 
 
-def load_model(model_size: str = "large-v3"):
-    from faster_whisper import WhisperModel
+def load_model(model_size: str = "large-v3-turbo"):
+    from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     try:
         model = WhisperModel(model_size, device="cuda", compute_type="int8_float16")
-        console.print(f"[green]Whisper {model_size} loaded on GPU (int8_float16)[/green]")
-        return model
+        console.print(f"[green]Whisper {model_size} loaded on GPU (int8_float16, batched)[/green]")
     except Exception as exc:
         console.print(f"[yellow]GPU load failed ({exc}); falling back to CPU int8[/yellow]")
-        return WhisperModel(model_size, device="cpu", compute_type="int8")
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    return BatchedInferencePipeline(model)
 
 
 def transcribe_file(model, path: Path, language: str | None = None):
@@ -44,6 +44,7 @@ def transcribe_file(model, path: Path, language: str | None = None):
         language=language,
         vad_filter=True,
         beam_size=5,
+        batch_size=8,
     )
     return [(s.start, s.end, s.text.strip()) for s in segments], info
 
@@ -69,7 +70,15 @@ def ingest_voice_notes(
         sha = db.file_sha256(path)
         if db.already_ingested(conn, path, sha):
             continue
-        segs, info = transcribe_file(model, path, language)
+        # claim BEFORE processing: if this file hard-crashes the process, the
+        # restart sees it as done (item_count=-1 = quarantined) and moves on
+        db.record_file(conn, path, sha, -1)
+        try:
+            segs, info = transcribe_file(model, path, language)
+        except Exception as exc:
+            console.print(f"  [yellow]skipped {path.name}: {exc}[/yellow]")
+            db.record_file(conn, path, sha, 0)
+            continue
         text = " ".join(t for _, _, t in segs).strip()
         n = 0
         if text:
@@ -109,7 +118,13 @@ def ingest_calls(
         sha = db.file_sha256(path)
         if db.already_ingested(conn, path, sha):
             continue
-        segs, info = transcribe_file(model, path, language)
+        db.record_file(conn, path, sha, -1)  # claim first — see ingest_voice_notes
+        try:
+            segs, info = transcribe_file(model, path, language)
+        except Exception as exc:
+            console.print(f"  [yellow]skipped {path.name}: {exc}[/yellow]")
+            db.record_file(conn, path, sha, 0)
+            continue
         n = db.insert_call_segments(conn, str(path), segs, info.language)
         db.record_file(conn, path, sha, n)
         processed += 1

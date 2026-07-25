@@ -3,14 +3,15 @@
 # Add every variant WhatsApp ever used for you (e.g. "Pardeep", "Pardeep Kumar", "You").
 me_names:
   - Pardeep
+  - Gen2
 
 whatsapp:
   # India-style dates (dd/mm/yy). Parser auto-detects when possible; this is the fallback.
   dayfirst: true
 
 transcription:
-  # faster-whisper model: large-v3 (best, ~3.2GB VRAM int8) | medium | small
-  model: large-v3
+  # faster-whisper model: large-v3-turbo (6-8x faster, near-equal quality) | large-v3 | medium
+  model: large-v3-turbo
   # null = auto-detect language per file (handles Hindi/English code-switching)
   language: null
 
