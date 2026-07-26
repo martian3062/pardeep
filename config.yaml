@@ -34,6 +34,15 @@ tts:
   # N longest voice notes copied to tts_reference_dir for voice cloning
   reference_clips: 12
 
+dataset:
+  # prior turns kept as context before each of your replies
+  context_turns: 6
+  min_words: 2
+  # merged call utterances run long (84 words avg); keep them
+  max_words: 400
+  max_per_conversation: 400
+  eval_fraction: 0.05
+
 paths:
   db: data/processed/messages.db
   tts_reference_dir: data/processed/tts_reference

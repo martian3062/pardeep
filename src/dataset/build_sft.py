@@ -1,0 +1,173 @@
+"""Turn the unified message store into supervised fine-tuning examples.
+
+One example = the conversation leading up to a turn Pardeep took, plus what he
+actually said. Training on these teaches the model to answer as him, in his
+languages, with his rhythm — the core of the "talks like me" layer.
+
+Loss is applied only to his turns; the caller's words are context, so the
+trainer must mask everything except the final assistant message.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import random
+import re
+import sqlite3
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ..config import REPO_ROOT
+
+# Whisper leftovers and content that teaches nothing about how he talks
+_NOISE = re.compile(r"^\W*$|^\[media\]$", re.IGNORECASE)
+
+
+@dataclass
+class BuildStats:
+    conversations: int = 0
+    examples: int = 0
+    dropped: dict[str, int] = field(default_factory=dict)
+
+    def drop(self, reason: str) -> None:
+        self.dropped[reason] = self.dropped.get(reason, 0) + 1
+
+
+def is_low_quality(text: str, min_words: int, max_words: int) -> str | None:
+    """Return a drop-reason, or None if the text is usable as a target."""
+    if _NOISE.match(text):
+        return "empty_or_media"
+    words = text.split()
+    if len(words) < min_words:
+        return "too_short"
+    if len(words) > max_words:
+        return "too_long"
+    # survived cleaning but still mostly one repeated token
+    if len(words) >= 6 and len(set(words)) <= max(2, len(words) // 4):
+        return "repetitive"
+    return None
+
+
+def merge_consecutive(turns: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Collapse runs by the same speaker into one turn (people send several
+    messages in a row; the model should learn the whole reply, not fragments)."""
+    merged: list[tuple[str, str]] = []
+    for speaker, text in turns:
+        if merged and merged[-1][0] == speaker:
+            merged[-1] = (speaker, merged[-1][1] + "\n" + text)
+        else:
+            merged.append((speaker, text))
+    return merged
+
+
+def load_conversations(conn: sqlite3.Connection) -> dict[str, list[tuple[str, str]]]:
+    convs: dict[str, list[tuple[str, str]]] = {}
+    for row in conn.execute(
+        "SELECT conversation_id, speaker, text FROM messages ORDER BY conversation_id, timestamp"
+    ):
+        convs.setdefault(row["conversation_id"], []).append((row["speaker"], row["text"]))
+    return convs
+
+
+def build_examples(
+    convs: dict[str, list[tuple[str, str]]],
+    context_turns: int = 6,
+    min_words: int = 2,
+    max_words: int = 250,
+    max_per_conversation: int = 400,
+    system_prompt: str = "",
+) -> tuple[list[dict], BuildStats]:
+    stats = BuildStats(conversations=len(convs))
+    examples: list[dict] = []
+    seen: set[str] = set()
+
+    for conv_id, raw_turns in convs.items():
+        turns = merge_consecutive(raw_turns)
+        from_conv = 0
+        for i, (speaker, text) in enumerate(turns):
+            if speaker != "me" or i == 0:
+                continue  # need at least one preceding turn to respond to
+            reason = is_low_quality(text, min_words, max_words)
+            if reason:
+                stats.drop(reason)
+                continue
+            context = turns[max(0, i - context_turns) : i]
+            if not any(s == "other" for s, _ in context):
+                stats.drop("no_counterpart_context")
+                continue
+            # dedupe on (immediate prompt, reply)
+            key = hashlib.sha1((context[-1][1] + "\x1f" + text).encode()).hexdigest()
+            if key in seen:
+                stats.drop("duplicate")
+                continue
+            seen.add(key)
+
+            messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+            for s, t in context:
+                messages.append({"role": "user" if s == "other" else "assistant", "content": t})
+            messages.append({"role": "assistant", "content": text})
+            examples.append({"conversation_id": conv_id, "messages": messages})
+            from_conv += 1
+            if from_conv >= max_per_conversation:
+                stats.drop("conversation_cap")
+                break
+
+    stats.examples = len(examples)
+    return examples, stats
+
+
+def write_splits(
+    examples: list[dict], out_dir: Path, eval_fraction: float = 0.05, seed: int = 17
+) -> tuple[int, int]:
+    """Split by CONVERSATION (sharing one across train/eval leaks context), but
+    budget by EXAMPLE COUNT: conversation sizes are wildly uneven here — a single
+    long WhatsApp chat holds half the corpus, and picking conversations blindly
+    put it in eval and starved training."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    counts: dict[str, int] = {}
+    for e in examples:
+        counts[e["conversation_id"]] = counts.get(e["conversation_id"], 0) + 1
+
+    target = len(examples) * eval_fraction
+    conv_ids = sorted(counts)
+    rng = random.Random(seed)
+    rng.shuffle(conv_ids)
+
+    eval_convs: set[str] = set()
+    used = 0
+    for conv in conv_ids:
+        if used >= target:
+            break
+        if counts[conv] > target:  # never let one giant conversation swallow eval
+            continue
+        eval_convs.add(conv)
+        used += counts[conv]
+
+    counts = [0, 0]
+    for name, keep in (("sft_train.jsonl", False), ("sft_eval.jsonl", True)):
+        with open(out_dir / name, "w", encoding="utf-8") as f:
+            for e in examples:
+                if (e["conversation_id"] in eval_convs) is keep:
+                    f.write(json.dumps({"messages": e["messages"]}, ensure_ascii=False) + "\n")
+                    counts[1 if keep else 0] += 1
+    return counts[0], counts[1]
+
+
+def build(conn: sqlite3.Connection, cfg: dict) -> tuple[BuildStats, int, int]:
+    dcfg = cfg.get("dataset", {})
+    persona_path = REPO_ROOT / "src" / "twin" / "persona.md"
+    system_prompt = persona_path.read_text(encoding="utf-8") if persona_path.exists() else ""
+
+    convs = load_conversations(conn)
+    examples, stats = build_examples(
+        convs,
+        context_turns=dcfg.get("context_turns", 6),
+        min_words=dcfg.get("min_words", 2),
+        max_words=dcfg.get("max_words", 250),
+        max_per_conversation=dcfg.get("max_per_conversation", 400),
+        system_prompt=system_prompt,
+    )
+    n_train, n_eval = write_splits(
+        examples, REPO_ROOT / "data" / "datasets", dcfg.get("eval_fraction", 0.05)
+    )
+    return stats, n_train, n_eval

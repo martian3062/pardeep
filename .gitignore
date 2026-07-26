@@ -1,5 +1,11 @@
 # Personal data — NEVER commit
 data/
+
+# Extracted identity: the persona card and Mind Model describe real people,
+# relationships and private behaviour. Code that builds them is public; the
+# artefacts are not.
+src/twin/persona.md
+src/twin/mind_model.json
 *.gguf
 *.env
 .env
