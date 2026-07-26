@@ -86,6 +86,26 @@ def audio(
 
 
 @app.command()
+def videos(
+    path: Path = typer.Argument(Path("data/raw/_dump"), help="Directory to scan for videos"),
+    out: Path = typer.Option(Path("data/raw/video_audio"), help="Where to write extracted audio"),
+):
+    """Extract audio from personal videos, ready for transcribe + diarize.
+
+    Diarization decides whose voice is whose afterwards, so forwarded clips
+    where you never speak contribute nothing to training.
+    """
+    from . import video as vid
+
+    seen, written, secs = vid.extract_all(path, out)
+    console.print(
+        f"[bold green]{seen} videos scanned, {written} with usable audio "
+        f"({secs / 60:.0f} min)[/bold green]"
+    )
+    console.print(f"[dim]Next: python -m src.ingest.run audio {out} --kind call[/dim]")
+
+
+@app.command()
 def enroll(
     path: Path = typer.Argument(..., help="Directory with YOUR voice notes"),
 ):

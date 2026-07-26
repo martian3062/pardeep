@@ -167,9 +167,18 @@ def main() -> None:
             if msgs is None:
                 skipped += 1
                 continue
-            texts.append(
-                tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
-            )
+            # Hybrid reasoning models (Sarvam-M) default to emitting a <think>
+            # block. Our targets are plain replies, so train with thinking off —
+            # otherwise the model learns a mismatch and monologues at inference.
+            try:
+                text = tokenizer.apply_chat_template(
+                    msgs, tokenize=False, add_generation_prompt=False, enable_thinking=False
+                )
+            except TypeError:
+                text = tokenizer.apply_chat_template(
+                    msgs, tokenize=False, add_generation_prompt=False
+                )
+            texts.append(text)
         if skipped:
             print(f"  {Path(path).name}: skipped {skipped} examples incompatible with template")
         return Dataset.from_dict({"text": texts})
