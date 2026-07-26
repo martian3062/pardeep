@@ -54,13 +54,21 @@ def sample_my_messages(
         by_conv.setdefault(r["conversation_id"], []).append(r)
 
     rng = random.Random(seed)
-    out: list[dict] = []
     convs = list(by_conv)
     rng.shuffle(convs)
-    per_conv = max(1, n // max(1, len(convs)))
-    for conv in convs:
-        msgs = by_conv[conv]
-        out.extend(rng.sample(msgs, min(per_conv, len(msgs))))
+    # Round-robin instead of a fixed per-conversation quota: hundreds of call
+    # fragments hold one message each, so a flat quota starves the sample long
+    # before reaching n. A per-conversation cap still stops one long chat from
+    # defining the persona on its own.
+    cap = max(5, int(n * 0.15))
+    pools = {c: rng.sample(by_conv[c], min(cap, len(by_conv[c]))) for c in convs}
+    out: list[dict] = []
+    while len(out) < n and any(pools.values()):
+        for conv in convs:
+            if pools[conv]:
+                out.append(pools[conv].pop())
+                if len(out) >= n:
+                    break
     rng.shuffle(out)
     return out[:n]
 
@@ -93,14 +101,31 @@ def sample_exchanges(
     return out
 
 
-def format_messages(msgs: list[dict], with_meta: bool = True) -> str:
-    lines = []
+def format_messages(
+    msgs: list[dict], with_meta: bool = True, max_tokens: int = 120_000
+) -> str:
+    """Render samples for a prompt, stopping before the context limit.
+
+    Gurmukhi and Devanagari cost far more tokens per character than Latin text,
+    so budget on an estimate rather than a message count: 800 mixed-script
+    messages overflowed a 200k window.
+    """
+    lines: list[str] = []
+    budget = max_tokens
     for m in msgs:
-        if with_meta:
-            lines.append(f"[{m['timestamp'][:10]} · {m['source']}] {m['text']}")
-        else:
-            lines.append(m["text"])
+        line = f"[{m['timestamp'][:10]} · {m['source']}] {m['text']}" if with_meta else m["text"]
+        cost = _estimate_tokens(line)
+        if cost > budget:
+            break
+        budget -= cost
+        lines.append(line)
     return "\n".join(lines)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough upper bound: ~1 token per char for Indic scripts, ~1 per 3.5 for Latin."""
+    indic = sum(1 for ch in text if "ऀ" <= ch <= "ൿ")
+    return int(indic + (len(text) - indic) / 3.5) + 2
 
 
 def format_exchanges(exchanges: list[tuple[str, list[dict]]]) -> str:

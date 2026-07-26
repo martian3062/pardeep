@@ -456,7 +456,9 @@ def diarize_calls(conn: sqlite3.Connection, cfg: dict) -> tuple[int, int]:
             conn,
             [
                 db.Message(
-                    source="call",
+                    # audio extracted from videos is mostly forwarded clips, so it
+                    # is tagged separately and excluded from training by config
+                    source="video" if "video_audio" in ref else "call",
                     conversation_id=f"call:{path.stem}",
                     timestamp=base_ts + timedelta(seconds=start),
                     speaker=speaker,

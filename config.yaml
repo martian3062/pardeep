@@ -4,6 +4,8 @@
 me_names:
   - Pardeep
   - Gen2
+  # newer exports carry the Gurmukhi spelling of his name
+  - ਪਰਦੀਪ
 
 whatsapp:
   # India-style dates (dd/mm/yy). Parser auto-detects when possible; this is the fallback.

@@ -18,8 +18,48 @@ console = Console()
 
 AUDIO_EXTS = {".opus", ".ogg", ".mp3", ".m4a", ".wav", ".aac", ".flac", ".wma", ".amr"}
 
-# WhatsApp voice-note filenames embed the date: PTT-20230726-WA0001.opus
-_WA_DATE = re.compile(r"(?:PTT|AUD)-(\d{4})(\d{2})(\d{2})-", re.IGNORECASE)
+# Recorders stamp the real date into the filename; file mtime is only the day the
+# archive was downloaded, so parsing the name is what gives the twin a truthful
+# timeline ("what was I doing in May 2025?") instead of dating everything to the
+# day it was ingested.
+_FILENAME_DATES = (
+    # call recorder: "Roshan 2025-10-14 13-38-46.m4a"  (the bulk of the corpus)
+    (re.compile(r"(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})"), "YMDhms"),
+    # older recorder: "919876075331_2020_09_20_15_34_02_out.mp3"
+    (re.compile(r"_(\d{4})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_(\d{2})_"), "YMDhms"),
+    # phone recorder: "REC20191026134952.mp3", "VID20220816183243.mp4".
+    # Must precede the date-only WhatsApp pattern below, which would otherwise
+    # match the same prefix and silently drop the time.
+    (re.compile(r"(?:REC|VID)(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})", re.IGNORECASE), "YMDhms"),
+    # WhatsApp media: "PTT-20230726-WA0001.opus"
+    (re.compile(r"(?:PTT|AUD|VID|IMG)[-_]?(\d{4})(\d{2})(\d{2})", re.IGNORECASE), "YMD"),
+    # TalkerACR: "phone_20241201-211909.amr"
+    (re.compile(r"_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})"), "YMDhms"),
+    # amr recorder: "Khusraj3-2012161436.amr" -> yy mm dd hh mm
+    (re.compile(r"[-_](\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\D|$)"), "ymdhm"),
+)
+
+
+def timestamp_from_name(name: str) -> datetime | None:
+    """Extract the recording time from a filename, or None if it has none."""
+    for pattern, layout in _FILENAME_DATES:
+        m = pattern.search(name)
+        if not m:
+            continue
+        g = [int(x) for x in m.groups()]
+        try:
+            if layout == "YMDhms":
+                dt = datetime(g[0], g[1], g[2], g[3], g[4], g[5])
+            elif layout == "YMD":
+                dt = datetime(g[0], g[1], g[2])
+            else:  # ymdhm — two-digit year
+                dt = datetime(2000 + g[0], g[1], g[2], g[3], g[4])
+        except ValueError:
+            continue  # e.g. month 13 from a coincidental digit run
+        # guard against random digit runs matching: the archive spans ~2015-now
+        if 2015 <= dt.year <= datetime.now().year + 1:
+            return dt
+    return None
 
 
 def iter_audio_files(root: Path) -> list[Path]:
@@ -71,10 +111,8 @@ def transcribe_file(model, path: Path, language: str | None = None, batch_size: 
 
 
 def file_timestamp(path: Path) -> datetime:
-    m = _WA_DATE.search(path.name)
-    if m:
-        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    return datetime.fromtimestamp(path.stat().st_mtime)
+    """When the recording happened — from the filename if it says, else mtime."""
+    return timestamp_from_name(path.name) or datetime.fromtimestamp(path.stat().st_mtime)
 
 
 def ingest_voice_notes(

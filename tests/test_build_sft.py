@@ -10,11 +10,21 @@ from src.dataset.build_sft import (
 
 def test_merge_consecutive_runs():
     turns = [("other", "hi"), ("me", "hey"), ("me", "kya haal"), ("other", "badhiya")]
-    assert merge_consecutive(turns) == [
+    assert [(s, t) for s, t, _ in merge_consecutive(turns)] == [
         ("other", "hi"),
         ("me", "hey\nkya haal"),
         ("other", "badhiya"),
     ]
+
+
+def test_merge_consecutive_keeps_last_timestamp():
+    # the merged turn is dated by its final message, which is what incremental
+    # builds use to decide whether an example is new
+    turns = [
+        ("me", "hey", "2025-01-01T10:00:00"),
+        ("me", "kya haal", "2025-01-01T10:05:00"),
+    ]
+    assert merge_consecutive(turns) == [("me", "hey\nkya haal", "2025-01-01T10:05:00")]
 
 
 def test_low_quality_filters():

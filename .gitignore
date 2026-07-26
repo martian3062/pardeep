@@ -1,11 +1,17 @@
 # Personal data — NEVER commit
 data/
+# raw WhatsApp exports dropped here for ingestion (chat text + media)
+new_chats/
+*.zip
 
 # Extracted identity: the persona card and Mind Model describe real people,
 # relationships and private behaviour. Code that builds them is public; the
 # artefacts are not.
 src/twin/persona.md
 src/twin/mind_model.json
+
+# Kaggle credentials (username + key pair)
+kaggle.json
 *.gguf
 *.env
 .env

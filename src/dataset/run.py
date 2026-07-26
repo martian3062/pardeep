@@ -18,19 +18,34 @@ console = Console()
 
 
 @app.command()
-def sft():
-    """Build supervised fine-tuning examples from the message store."""
+def sft(
+    since: str = typer.Option(
+        "", help="Incremental build: only conversations after this date (YYYY-MM-DD)"
+    ),
+    replay: float = typer.Option(
+        0.3, help="Fraction of the incremental set drawn from older data (anti-forgetting)"
+    ),
+):
+    """Build supervised fine-tuning examples from the message store.
+
+    Full build by default. With --since, builds only what is new plus a replay
+    sample of older examples, for a short incremental run on top of the current
+    adapter instead of a multi-hour retrain from base.
+    """
     from . import build_sft
 
     cfg = load_config()
     conn = dbm.connect(db_path(cfg))
-    stats, n_train, n_eval = build_sft.build(conn, cfg)
+    stats, n_train, n_eval = build_sft.build(conn, cfg, since=since, replay_ratio=replay)
 
     table = Table(title="SFT dataset")
     table.add_column("metric")
     table.add_column("value", justify="right")
     table.add_row("conversations", str(stats.conversations))
     table.add_row("named contacts (person-aware)", str(stats.named_contacts))
+    if stats.incremental_from:
+        table.add_row("incremental since", stats.incremental_from)
+        table.add_row("  replay from older data", str(stats.replay_included))
     table.add_row("[bold]training examples[/bold]", f"[bold]{n_train}[/bold]")
     table.add_row("eval examples", str(n_eval))
     for reason, n in sorted(stats.dropped.items(), key=lambda kv: -kv[1]):

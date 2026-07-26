@@ -71,6 +71,8 @@ class BuildStats:
     conversations: int = 0
     examples: int = 0
     named_contacts: int = 0
+    incremental_from: str = ""
+    replay_included: int = 0
     dropped: dict[str, int] = field(default_factory=dict)
 
     def drop(self, reason: str) -> None:
@@ -92,16 +94,58 @@ def is_low_quality(text: str, min_words: int, max_words: int) -> str | None:
     return None
 
 
-def merge_consecutive(turns: list[tuple[str, str]]) -> list[tuple[str, str]]:
+_MEDIA_TOKEN = re.compile(r"\[media\]\s*", re.IGNORECASE)
+
+
+def strip_media_markers(text: str) -> str:
+    """Remove the placeholder the WhatsApp parser writes for photos/videos.
+
+    Media-only messages are already rejected as targets, but merging a run of
+    consecutive messages splices the placeholder into an otherwise real reply —
+    and 9.4% of targets ended up containing it, which taught the twin to answer
+    literally "[media]". It carries no linguistic signal, so drop it entirely.
+    """
+    return _MEDIA_TOKEN.sub("", text).strip()
+
+
+def merge_consecutive(turns: list[tuple]) -> list[tuple]:
     """Collapse runs by the same speaker into one turn (people send several
-    messages in a row; the model should learn the whole reply, not fragments)."""
-    merged: list[tuple[str, str]] = []
-    for speaker, text in turns:
+    messages in a row; the model should learn the whole reply, not fragments).
+
+    Accepts (speaker, text) or (speaker, text, timestamp); a merged turn keeps
+    the timestamp of its last message, which is what dates the example.
+    """
+    merged: list[tuple] = []
+    for turn in turns:
+        speaker, text = turn[0], turn[1]
+        ts = turn[2] if len(turn) > 2 else ""
         if merged and merged[-1][0] == speaker:
-            merged[-1] = (speaker, merged[-1][1] + "\n" + text)
+            merged[-1] = (speaker, merged[-1][1] + "\n" + text, ts or merged[-1][2])
         else:
-            merged.append((speaker, text))
+            merged.append((speaker, text, ts))
     return merged
+
+
+def split_new_and_replay(
+    examples: list[dict], since: str, replay_ratio: float = 0.3, seed: int = 17
+) -> list[dict]:
+    """Incremental training set: everything after `since`, plus a replay sample
+    of older examples.
+
+    Fine-tuning only on the newest month makes the model drift toward it and
+    forget how he wrote before — catastrophic forgetting. Mixing in a slice of
+    the older corpus keeps the established voice stable while the new data
+    updates it, and costs minutes instead of a full retrain.
+    """
+    new = [e for e in examples if e.get("last_ts", "") >= since]
+    old = [e for e in examples if e.get("last_ts", "") < since]
+    if not new:
+        return []
+    rng = random.Random(seed)
+    n_replay = min(len(old), int(len(new) * replay_ratio / max(1e-9, 1 - replay_ratio)))
+    mixed = new + rng.sample(old, n_replay)
+    rng.shuffle(mixed)
+    return mixed
 
 
 def load_conversations(
@@ -115,16 +159,18 @@ def load_conversations(
     dialogue) and sung/dubbed speech scored high enough against the voice
     fingerprint to be mislabelled as his.
     """
-    sql = "SELECT conversation_id, speaker, text FROM messages"
+    sql = "SELECT conversation_id, speaker, text, timestamp FROM messages"
     params: list[str] = []
     if exclude_sources:
         sql += f" WHERE source NOT IN ({','.join('?' * len(exclude_sources))})"
         params = list(exclude_sources)
     sql += " ORDER BY conversation_id, timestamp"
 
-    convs: dict[str, list[tuple[str, str]]] = {}
+    convs: dict[str, list[tuple[str, str, str]]] = {}
     for row in conn.execute(sql, params):
-        convs.setdefault(row["conversation_id"], []).append((row["speaker"], row["text"]))
+        convs.setdefault(row["conversation_id"], []).append(
+            (row["speaker"], row["text"], row["timestamp"])
+        )
     return convs
 
 
@@ -146,15 +192,17 @@ def build_examples(
         turns = merge_consecutive(raw_turns)
         who = counterpart_label(conv_id, relationships)
         from_conv = 0
-        for i, (speaker, text) in enumerate(turns):
+        for i, turn in enumerate(turns):
+            speaker, text = turn[0], turn[1]
             if speaker != "me" or i == 0:
                 continue  # need at least one preceding turn to respond to
+            text = strip_media_markers(text)
             reason = is_low_quality(text, min_words, max_words)
             if reason:
                 stats.drop(reason)
                 continue
             context = turns[max(0, i - context_turns) : i]
-            if not any(s == "other" for s, _ in context):
+            if not any(t[0] == "other" for t in context):
                 stats.drop("no_counterpart_context")
                 continue
             # dedupe on (immediate prompt, reply)
@@ -167,10 +215,19 @@ def build_examples(
             preamble = f"You are talking to {who}." if who else ""
             system = "\n\n".join(x for x in (system_prompt, preamble) if x)
             messages = [{"role": "system", "content": system}] if system else []
-            for s, t in context:
-                messages.append({"role": "user" if s == "other" else "assistant", "content": t})
+            for ctx in context:
+                messages.append(
+                    {"role": "user" if ctx[0] == "other" else "assistant", "content": ctx[1]}
+                )
             messages.append({"role": "assistant", "content": text})
-            examples.append({"conversation_id": conv_id, "messages": messages})
+            examples.append(
+                {
+                    "conversation_id": conv_id,
+                    "messages": messages,
+                    # dates the example so incremental runs can select what is new
+                    "last_ts": turn[2] if len(turn) > 2 else "",
+                }
+            )
             from_conv += 1
             if from_conv >= max_per_conversation:
                 stats.drop("conversation_cap")
@@ -217,10 +274,21 @@ def write_splits(
     return counts[0], counts[1]
 
 
-def build(conn: sqlite3.Connection, cfg: dict) -> tuple[BuildStats, int, int]:
+def build(
+    conn: sqlite3.Connection, cfg: dict, since: str = "", replay_ratio: float = 0.3
+) -> tuple[BuildStats, int, int]:
     dcfg = cfg.get("dataset", {})
+    # The persona card belongs at inference time, steering models that were never
+    # fine-tuned (Claude/GPT). Embedding it in every training example made each
+    # sample ~1800 tokens of mostly repeated boilerplate around ~300 tokens of
+    # actual conversation — 6x the training cost to teach the model to recite a
+    # card it is already learning to embody from the data itself.
     persona_path = REPO_ROOT / "src" / "twin" / "persona.md"
-    system_prompt = persona_path.read_text(encoding="utf-8") if persona_path.exists() else ""
+    system_prompt = (
+        persona_path.read_text(encoding="utf-8")
+        if (dcfg.get("include_persona") and persona_path.exists())
+        else ""
+    )
 
     convs = load_conversations(conn, tuple(dcfg.get("exclude_sources", ["video"])))
     relationships = load_relationship_map() if dcfg.get("person_aware", True) else {}
@@ -234,6 +302,17 @@ def build(conn: sqlite3.Connection, cfg: dict) -> tuple[BuildStats, int, int]:
         relationships=relationships,
     )
     stats.named_contacts = len(relationships)
+    if since:
+        before = len(examples)
+        examples = split_new_and_replay(examples, since, replay_ratio)
+        stats.incremental_from = since
+        stats.replay_included = len(examples) - sum(
+            1 for e in examples if e.get("last_ts", "") >= since
+        )
+        stats.examples = len(examples)
+        if not examples:
+            raise SystemExit(f"no examples newer than {since} (corpus has {before})")
+
     n_train, n_eval = write_splits(
         examples, REPO_ROOT / "data" / "datasets", dcfg.get("eval_fraction", 0.05)
     )

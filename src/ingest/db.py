@@ -188,7 +188,11 @@ def reset_call_labels(conn: sqlite3.Connection) -> tuple[int, int]:
     """Clear diarization results so labeling can be re-run from cached embeddings.
     Returns (segments_unlabeled, messages_deleted)."""
     segs = conn.execute("UPDATE call_segments SET speaker = NULL").rowcount
-    msgs = conn.execute("DELETE FROM messages WHERE source = 'call'").rowcount
+    # video-derived rows are promoted by the same pass, so they must be cleared
+    # too or relabeling leaves stale duplicates behind
+    msgs = conn.execute(
+        "DELETE FROM messages WHERE source IN ('call', 'video')"
+    ).rowcount
     conn.commit()
     return segs, msgs
 

@@ -59,7 +59,8 @@ flowchart TB
 
     subgraph APP["Phase 6 — App (Litestar + TanStack Start)"]
         API[Litestar API<br/>REST + WebSocket streams]
-        UI[TanStack Start UI<br/>Chat · Diary · Notes · Memory inspector]
+        UI[TanStack Start UI<br/>Chat · Diary · Notes]
+        MARIMO[marimo notebooks<br/>memory inspector · corpus + dataset audit]
     end
 
     subgraph VISION["Phase 8 — Vision (src/vision)"]
@@ -194,6 +195,12 @@ Zero-shot clone from my voice-note clips first; fine-tuned GPT-SoVITS if Hinglis
 - **Frontend: TanStack Start** (React) — end-to-end type safety, server functions, TanStack
   Query/Router built in. Tabs: **Chat** (text+voice+camera) · **Diary** · **Notes**
   (auto-tagged, searchable) · **Memory inspector** ("what do you know about X?").
+- **Data/memory exploration: marimo** — a reactive notebook stored as plain `.py`, so it
+  diffs in git and runs as an app (`marimo run`). Used for the inspector-style surfaces
+  that are really data exploration rather than product UI: browsing the 53k-message
+  corpus, auditing transcript quality, checking what the memory store actually retrieves
+  for a query, and reviewing training examples before a run. Cheaper to build there than
+  as React pages, and it doubles as the interim UI before the app exists.
 
 The **router** decides per message: casual/style reply → local fine-tuned model; complex
 reasoning → Claude or GPT API (best fit per task, mutual fallback) with persona card +
@@ -306,7 +313,8 @@ me_too/
 ├── training/              # Unsloth/RunPod scripts, DPO configs
 ├── app/
 │   ├── api/               # Litestar backend (REST + WebSocket channels)
-│   └── web/               # TanStack Start frontend (+ MediaPipe in-browser vision)
+│   ├── web/               # TanStack Start frontend (+ MediaPipe in-browser vision)
+│   └── notebooks/         # marimo: memory inspector, corpus + dataset audit
 └── tests/
 ```
 
@@ -352,6 +360,7 @@ uv run pytest -q
 | Memory                 | **LanceDB** + bge-m3 (mem0 under evaluation)                  | local                |
 | Backend                | **Litestar** (ASGI, msgspec, WebSocket channels)              | local                |
 | Frontend               | **TanStack Start** (React, typed server functions)            | local                |
+| Data/memory exploration | **marimo** (reactive notebooks as plain .py, `marimo run` as app) | local            |
 | Face ID                | **InsightFace** buffalo_l (ONNX)                              | local GPU            |
 | Expression / mood      | **MediaPipe** Face Landmarker blendshapes                     | in browser (WASM)    |
 | Guardrails             | **Presidio** PII + trust-tier retrieval + **Llama-Guard-3-1B** | local               |
@@ -365,7 +374,7 @@ uv run pytest -q
 - [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers
 - [ ] Phase 4b — visual memories (6,862 photos: EXIF dates + local VLM captions)
 - [ ] Phase 5 — voice clone + mic loop
-- [ ] Phase 6 — app: Litestar API + TanStack Start UI
+- [ ] Phase 6 — app: Litestar API + TanStack Start UI + marimo inspector notebooks
 - [ ] Phase 7 — daily diary + DPO active learning
 - [ ] Phase 8 — vision: face ID unlock + expression/mood-aware twin + mood timeline
 - [ ] Phase 9 — guardrails: owner/guest modes, trust-tier memory, PII output guard, audit log

@@ -50,6 +50,11 @@ class Memory:
 class Embedder:
     """bge-m3 on the laptop GPU when it fits, else CPU."""
 
+    # bge-m3 accepts 8192 tokens, but conversation chunks are ~300; leaving the
+    # default window makes every batch allocate for the worst case and OOMs a
+    # 6GB laptop card partway through indexing.
+    MAX_TOKENS = 512
+
     def __init__(self, model_name: str = EMBED_MODEL, device: str | None = None):
         os.environ.setdefault("HF_HOME", r"E:\cache\huggingface")
         from sentence_transformers import SentenceTransformer
@@ -61,12 +66,28 @@ class Embedder:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
             except ImportError:
                 device = "cpu"
+        self.device = device
         self.model = SentenceTransformer(model_name, device=device)
+        self.model.max_seq_length = self.MAX_TOKENS
 
-    def encode(self, texts: list[str], batch_size: int = 16) -> list[list[float]]:
-        vecs = self.model.encode(
-            texts, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False
-        )
+    def encode(self, texts: list[str], batch_size: int = 8) -> list[list[float]]:
+        try:
+            vecs = self.model.encode(
+                texts, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False
+            )
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower() or self.device == "cpu":
+                raise
+            # finish on CPU rather than lose an hour of indexing to one long batch
+            import torch
+
+            torch.cuda.empty_cache()
+            self.model = self.model.to("cpu")
+            self.device = "cpu"
+            print("  embedding OOM on GPU — continuing on CPU")
+            vecs = self.model.encode(
+                texts, batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False
+            )
         return [v.tolist() for v in vecs]
 
 

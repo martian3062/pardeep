@@ -45,6 +45,29 @@ PRESETS = {
         "batch_size": 4,
         "grad_accum": 4,
     },
+    # Indic-native 2B laptop-twin candidates: weaker at reasoning than the global
+    # 4B models, but their tokenizer spends far fewer tokens per Gurmukhi word,
+    # and at ~1.2GB quantized they leave room for Whisper and TTS alongside.
+    "sarvam1": {
+        "name": "sarvamai/sarvam-1",
+        "instruction_part": "<|im_start|>user\n",
+        "response_part": "<|im_start|>assistant\n",
+        "chat_template": "chatml",
+        "max_seq_length": 2048,
+        "batch_size": 4,
+        "grad_accum": 4,
+        "fallback_template": "chatml",
+    },
+    "sarvam1v05": {
+        "name": "sarvamai/sarvam-1-v0.5",
+        "instruction_part": "<|im_start|>user\n",
+        "response_part": "<|im_start|>assistant\n",
+        "chat_template": "chatml",
+        "max_seq_length": 2048,
+        "batch_size": 4,
+        "grad_accum": 4,
+        "fallback_template": "chatml",
+    },
     "sarvam24b": {
         "name": "sarvamai/sarvam-m",
         "instruction_part": "[INST]",
@@ -215,6 +238,9 @@ def main() -> None:
         "seed": 17,
         "report_to": "none",
         "dataset_num_proc": 1,  # multiprocess map re-triggers the pickling failure
+        # Chat turns average ~260 tokens; without packing each one would occupy a
+        # full 2048-token window and waste most of the GPU's work.
+        "packing": True,
         # In-loop eval gathers full logits and casts them to fp32 — with a 130k
         # vocab that is a multi-GB spike that OOMed the run. Score the held-out
         # set after training instead.
