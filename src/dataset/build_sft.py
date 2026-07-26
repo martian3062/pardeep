@@ -104,11 +104,26 @@ def merge_consecutive(turns: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return merged
 
 
-def load_conversations(conn: sqlite3.Connection) -> dict[str, list[tuple[str, str]]]:
+def load_conversations(
+    conn: sqlite3.Connection, exclude_sources: tuple[str, ...] = ()
+) -> dict[str, list[tuple[str, str]]]:
+    """Load the corpus grouped by conversation.
+
+    `exclude_sources` keeps low-signal material out of training while leaving it
+    in the store. Video audio is excluded by default: the archive's videos are
+    overwhelmingly forwarded entertainment (song lyrics, Korean drama, dubbed TV
+    dialogue) and sung/dubbed speech scored high enough against the voice
+    fingerprint to be mislabelled as his.
+    """
+    sql = "SELECT conversation_id, speaker, text FROM messages"
+    params: list[str] = []
+    if exclude_sources:
+        sql += f" WHERE source NOT IN ({','.join('?' * len(exclude_sources))})"
+        params = list(exclude_sources)
+    sql += " ORDER BY conversation_id, timestamp"
+
     convs: dict[str, list[tuple[str, str]]] = {}
-    for row in conn.execute(
-        "SELECT conversation_id, speaker, text FROM messages ORDER BY conversation_id, timestamp"
-    ):
+    for row in conn.execute(sql, params):
         convs.setdefault(row["conversation_id"], []).append((row["speaker"], row["text"]))
     return convs
 
@@ -207,7 +222,7 @@ def build(conn: sqlite3.Connection, cfg: dict) -> tuple[BuildStats, int, int]:
     persona_path = REPO_ROOT / "src" / "twin" / "persona.md"
     system_prompt = persona_path.read_text(encoding="utf-8") if persona_path.exists() else ""
 
-    convs = load_conversations(conn)
+    convs = load_conversations(conn, tuple(dcfg.get("exclude_sources", ["video"])))
     relationships = load_relationship_map() if dcfg.get("person_aware", True) else {}
     examples, stats = build_examples(
         convs,
