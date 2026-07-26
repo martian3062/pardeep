@@ -57,9 +57,9 @@ flowchart TB
         TTS[cloned voice TTS<br/>F5-TTS / XTTS → GPT-SoVITS]
     end
 
-    subgraph APP["Phase 6 — App (Litestar + TanStack Start)"]
-        API[Litestar API<br/>REST + WebSocket streams]
-        UI[TanStack Start UI<br/>Chat · Diary · Notes · Memory inspector]
+    subgraph APP["Phase 6 — App (Django on Render)"]
+        API[Django + Channels<br/>REST + WebSocket streams]
+        UI[Templates + HTMX<br/>Chat · Diary · Notes · Memory inspector]
     end
 
     subgraph VISION["Phase 8 — Vision (src/vision)"]
@@ -187,21 +187,27 @@ mic → silero-VAD → faster-whisper (STT) → twin brain → F5-TTS/XTTS clone
 
 Zero-shot clone from my voice-note clips first; fine-tuned GPT-SoVITS if Hinglish quality needs it.
 
-### Phase 6 — App (Litestar + TanStack Start)
+### Phase 6 — App (Django, deployed on Render)
 
-- **Backend: Litestar** (ASGI) — faster than FastAPI (msgspec serialization), first-class
-  **WebSocket channels** for streaming voice, live transcription, and camera signals; typed DI.
-- **Frontend: TanStack Start** (React) — end-to-end type safety, server functions, TanStack
-  Query/Router built in. Tabs: **Chat** (text+voice+camera) · **Diary** · **Notes**
+- **Backend: Django** — chosen for a straightforward Render deployment: one process type,
+  managed Postgres, built-in admin for inspecting memories/diary entries, and sessions +
+  auth already solved (the twin must never be world-open). Django Channels covers the
+  WebSocket streams for voice and camera signals.
+- **Frontend:** Django templates + HTMX for the app shell; a React island only where live
+  streaming needs it. Tabs: **Chat** (text+voice+camera) · **Diary** · **Notes**
   (auto-tagged, searchable) · **Memory inspector** ("what do you know about X?").
+- **Split at deploy time:** Render runs the app, the API and Postgres. The heavy local
+  pieces — LanceDB memory, Whisper, voice cloning, the fine-tuned twin — stay on the
+  home machine/VM and are reached over a private tunnel, so raw personal data never
+  lands on a hosting provider.
 
 The **router** decides per message: casual/style reply → local fine-tuned model; complex
 reasoning → Claude or GPT API (best fit per task, mutual fallback) with persona card +
 retrieved snippets only.
 
-Dev = local (`litestar run` + `vite dev`); production = same box or home server, UI served
-by Litestar behind Caddy/Tailscale so the twin is reachable from your phone — data still
-never leaves your machines.
+Dev = `manage.py runserver`; production = Render for the app + Postgres, with the models
+and memory reached over a private tunnel to the home machine — the twin is usable from a
+phone without personal data leaving your own hardware.
 
 ### Phase 7 — Active learning loop (daily)
 
@@ -305,8 +311,8 @@ me_too/
 │   └── diary/             # daily diary, feedback capture
 ├── training/              # Unsloth/RunPod scripts, DPO configs
 ├── app/
-│   ├── api/               # Litestar backend (REST + WebSocket channels)
-│   └── web/               # TanStack Start frontend (+ MediaPipe in-browser vision)
+│   ├── api/               # Django project (+ Channels), deployed to Render
+│   └── web/               # templates + HTMX (+ MediaPipe in-browser vision)
 └── tests/
 ```
 
@@ -350,8 +356,8 @@ uv run pytest -q
 | Diarization            | **pyannote-audio 3.1**                                        | local                |
 | Voice clone            | **F5-TTS / XTTS-v2** → GPT-SoVITS                            | local                |
 | Memory                 | **LanceDB** + bge-m3 (mem0 under evaluation)                  | local                |
-| Backend                | **Litestar** (ASGI, msgspec, WebSocket channels)              | local                |
-| Frontend               | **TanStack Start** (React, typed server functions)            | local                |
+| Backend                | **Django** (+ Channels)                                       | Render               |
+| Frontend               | Django templates + HTMX (React island for streaming)          | Render               |
 | Face ID                | **InsightFace** buffalo_l (ONNX)                              | local GPU            |
 | Expression / mood      | **MediaPipe** Face Landmarker blendshapes                     | in browser (WASM)    |
 | Guardrails             | **Presidio** PII + trust-tier retrieval + **Llama-Guard-3-1B** | local               |
@@ -360,11 +366,12 @@ uv run pytest -q
 
 - [X] **Phase 1** — ingestion: WhatsApp parser, Whisper transcription, unified DB, idempotent CLI
 - [X] **Phase 1b** — call diarization (pyannote) + speaker ID via voice-note enrollment + TTS reference clips
-- [ ] Phase 2 — SFT dataset + persona card + fact extraction
-- [ ] Phase 3 — first QLoRA fine-tune → Ollama serving
-- [ ] Phase 4 — memory (LanceDB + consolidation)
+- [X] **Phase 2** — SFT dataset (person-aware) + persona card + Mind Model
+- [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on the L4 VM (epoch-2.4 checkpoint kept)
+- [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers
+- [ ] Phase 4b — visual memories (6,862 photos: EXIF dates + local VLM captions)
 - [ ] Phase 5 — voice clone + mic loop
-- [ ] Phase 6 — app: Litestar API + TanStack Start UI
+- [ ] Phase 6 — app: Django (+ Channels) on Render, heavy models stay home
 - [ ] Phase 7 — daily diary + DPO active learning
 - [ ] Phase 8 — vision: face ID unlock + expression/mood-aware twin + mood timeline
 - [ ] Phase 9 — guardrails: owner/guest modes, trust-tier memory, PII output guard, audit log

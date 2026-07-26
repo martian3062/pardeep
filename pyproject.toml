@@ -18,6 +18,10 @@ dependencies = [
 [dependency-groups]
 dev = ["pytest>=8.0"]
 transcribe = ["faster-whisper>=1.1"]
+memory = [
+    "lancedb>=0.15",
+    "sentence-transformers>=3.0",
+]
 diarize = [
     "pyannote-audio>=3.3",
     "huggingface-hub<1.0",  # pyannote 3.x still uses the removed use_auth_token API
