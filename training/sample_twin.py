@@ -37,6 +37,10 @@ def main() -> None:
     ap.add_argument("--persona", default="persona.md")
     ap.add_argument("--repetition-penalty", type=float, default=1.15)
     ap.add_argument("--no-repeat-ngram", type=int, default=4)
+    # One sample per prompt at temperature 0.8 is not evidence: two adapters that
+    # differ by 18 training examples produced visibly different answers purely
+    # from sampling noise. Draw several and judge the distribution.
+    ap.add_argument("--samples", type=int, default=3, help="generations per prompt")
     args = ap.parse_args()
 
     from pathlib import Path
@@ -73,6 +77,7 @@ def main() -> None:
                 temperature=0.8,
                 top_p=0.9,
                 do_sample=True,
+                num_return_sequences=args.samples,
                 # Both checkpoints looped on long English ("I don't have a
                 # choice" x15) — the model knows what to say, the decoder gets
                 # stuck. Training data is fragmentary call speech, which makes
@@ -81,8 +86,12 @@ def main() -> None:
                 no_repeat_ngram_size=args.no_repeat_ngram,
                 pad_token_id=tokenizer.eos_token_id,
             )
-            reply = tokenizer.decode(out[0][ids.shape[-1] :], skip_special_tokens=True).strip()
-            print(f"\n[{who}]\n  THEM: {msg}\n  TWIN: {reply}")
+            print(f"\n[{who}]\n  THEM: {msg}")
+            for i in range(out.shape[0]):
+                reply = tokenizer.decode(
+                    out[i][ids.shape[-1] :], skip_special_tokens=True
+                ).strip()
+                print(f"  TWIN {i + 1}: {reply}")
         del model
         import gc
 

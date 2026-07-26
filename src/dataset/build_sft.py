@@ -216,8 +216,15 @@ def build_examples(
             system = "\n\n".join(x for x in (system_prompt, preamble) if x)
             messages = [{"role": "system", "content": system}] if system else []
             for ctx in context:
+                # strip the placeholder from CONTEXT as well: leaving it there
+                # kept teaching the model that "[media]" is a token that appears
+                # in conversation, and it still emitted it as a reply even after
+                # targets were cleaned
+                ctx_text = strip_media_markers(ctx[1])
+                if not ctx_text:
+                    continue
                 messages.append(
-                    {"role": "user" if ctx[0] == "other" else "assistant", "content": ctx[1]}
+                    {"role": "user" if ctx[0] == "other" else "assistant", "content": ctx_text}
                 )
             messages.append({"role": "assistant", "content": text})
             examples.append(
