@@ -77,8 +77,11 @@ PRESETS = {
         # batch 1 x accum 16 trains the same tokens per optimizer step as 2 x 8
         # at the same speed, but with a much smaller activation peak — the VM
         # shares its GPU with another service that reclaims several GB.
+        # Effective batch 8 rather than 16: with packing the corpus is only ~570
+        # sequences, so a larger batch left just 36 optimizer steps per epoch —
+        # too few for the schedule to converge. Halving it doubles the updates.
         "batch_size": 1,
-        "grad_accum": 16,
+        "grad_accum": 8,
         # Mistral-family templates reject non-alternating turns and have no
         # system role: a conversation window that opens with his own line, or a
         # persona system prompt, would abort templating.
@@ -127,6 +130,12 @@ def main() -> None:
     ap.add_argument("--epochs", type=float, default=3.0)
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--rank", type=int, default=32)
+    ap.add_argument(
+        "--neftune",
+        type=float,
+        default=5.0,
+        help="embedding noise during training; 0 disables",
+    )
     ap.add_argument("--export-gguf", action="store_true", help="also write Q4_K_M GGUF")
     ap.add_argument("--resume", action="store_true", help="resume from last checkpoint")
     ap.add_argument(
@@ -171,13 +180,19 @@ def main() -> None:
     model = FastLanguageModel.get_peft_model(
         model,
         r=args.rank,
-        lora_alpha=args.rank,
+        # alpha = 2*r is the stronger default for style transfer: the update
+        # scale is alpha/r, so alpha == r halves the adaptation the LoRA can
+        # express. v3 used alpha == r == 16 and produced very terse replies.
+        lora_alpha=args.rank * 2,
         lora_dropout=0.0,
         bias="none",
         target_modules=[
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
         ],
+        # rank-stabilised LoRA divides by sqrt(r) instead of r, which keeps the
+        # effective learning rate sane once rank goes above ~16
+        use_rslora=True,
         use_gradient_checkpointing="unsloth",
         random_state=17,
     )
@@ -234,7 +249,15 @@ def main() -> None:
         # destroy 45 minutes of training because saving happens after evaluation.
         "save_strategy": "steps",
         "save_steps": 25,
-        "save_total_limit": 2,
+        "save_total_limit": 3,
+        # Embedding noise (NEFTune). On small instruction/style datasets it
+        # reliably improves generation quality and reduces the terse, degenerate
+        # replies v3 produced; costs nothing at inference.
+        "neftune_noise_alpha": args.neftune or None,
+        # Keep the schedule from decaying to exactly zero — the last steps still
+        # carry signal on a run this short (~100 optimizer steps).
+        "lr_scheduler_kwargs": {"num_cycles": 0.4},
+        "max_grad_norm": 1.0,
         "seed": 17,
         "report_to": "none",
         "dataset_num_proc": 1,  # multiprocess map re-triggers the pickling failure
@@ -250,8 +273,20 @@ def main() -> None:
     cfg_kwargs["max_seq_length" if "max_seq_length" in cfg_fields else "max_length"] = preset[
         "max_seq_length"
     ]
+    # Evaluate on a step cadence and keep the checkpoint with the best held-out
+    # loss. v1 had to be judged by hand after the fact (its final epoch had
+    # memorised the data); tracking eval loss picks the right one automatically.
+    # prediction_loss_only keeps this cheap — gathering full logits over a 130k
+    # vocab is what OOMed the earlier run.
     eval_key = "eval_strategy" if "eval_strategy" in cfg_fields else "evaluation_strategy"
-    cfg_kwargs[eval_key] = "epoch" if (eval_ds and args.eval_in_loop) else "no"
+    if eval_ds and args.eval_in_loop:
+        cfg_kwargs[eval_key] = "steps"
+        cfg_kwargs["eval_steps"] = 25
+        cfg_kwargs["load_best_model_at_end"] = True
+        cfg_kwargs["metric_for_best_model"] = "eval_loss"
+        cfg_kwargs["greater_is_better"] = False
+    else:
+        cfg_kwargs[eval_key] = "no"
     cfg_kwargs = {k: v for k, v in cfg_kwargs.items() if k in cfg_fields}
 
     trainer_params = set(inspect.signature(SFTTrainer.__init__).parameters)

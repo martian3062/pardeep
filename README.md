@@ -131,6 +131,23 @@ Filtering: dedupe, drop media-only + 1-word noise, cap per-contact dominance, 5%
 
 ### Phase 3 — Training (own GCP VM — NVIDIA L4 24GB, no rental cost)
 
+**Hyperparameters** (`training/train_qlora.py`), and why each is set that way —
+several were learned the hard way across four runs:
+
+| Setting | Value | Reason |
+|---|---|---|
+| LoRA rank | 32 | 16 was chosen when another service shared the GPU; 5.4k examples support more capacity |
+| LoRA alpha | **2 × rank** | update scale is alpha/r — `alpha == r` halved the adaptation and produced very terse replies |
+| rsLoRA | on | divides by √r instead of r, keeping the effective LR sane above rank ~16 |
+| Learning rate | 2e-4, cosine, 5% warmup | standard QLoRA; cosine floor kept off zero (`num_cycles 0.4`) since the run is only ~100 steps |
+| Optimizer | `adamw_8bit` | quantized states save ~1GB with no measurable quality cost |
+| Effective batch | **8** (1 × accum 8) | packing leaves ~570 sequences, so batch 16 gave only 36 steps/epoch — too few to converge |
+| Epochs | 3, best checkpoint kept | v1 memorized at 3 epochs on 832 examples; with 5.4k and eval tracking, overfitting is detected rather than guessed |
+| **NEFTune** | alpha 5 | embedding noise; reliably improves generation quality on small style datasets, free at inference |
+| Eval | every 25 steps, `prediction_loss_only` | picks the best checkpoint automatically; loss-only avoids the 130k-vocab logit spike that OOMed a run |
+| Max seq / packing | 2048, packing on | chat turns average ~260 tokens; packing cut a projected 16.8h run to ~2h |
+| Loss masking | `train_on_responses_only` | the other person's words are context, never targets — otherwise the twin learns to imitate everyone |
+
 ```mermaid
 flowchart LR
     DS[sft.jsonl] -->|scp dataset only| POD[GCP VM · NVIDIA L4 24GB<br/>Unsloth QLoRA r=32<br/>2-3 epochs]
@@ -138,6 +155,20 @@ flowchart LR
     MERGE -->|scp back, wipe VM copy| OL[Ollama @ E:\cache\ollama<br/>runs on RTX 4050 6GB]
     FB[feedback pairs<br/>chosen vs rejected] -->|monthly| POD
 ```
+
+#### Run history — what each version taught us
+
+| Run | Data | Config | Outcome |
+|---|---|---|---|
+| v1 | 832 ex, 3 epochs | r16, α=r | Overfit: answered "Airtel 5g hai ab" when his mother asked if he'd eaten — it had memorized the contact string. English degenerated into "I don't have a choice" ×15. |
+| v2 | 5,453 ex, 2 epochs | r16, α=r | Repetition loops **gone**, coherent English, register right ("hnji", "ni"). Emitted `[media]` — 9.4% of targets contained the placeholder. |
+| v3 | 5,435 ex (targets cleaned) | r16, α=r | Still emitted `[media]`: the placeholder remained in *context* turns. Very terse ("...", "Hello") — α=r under-scales adaptation. |
+| v4 | 5,435 ex (fully cleaned) | r32, α=2r, rsLoRA, NEFTune, eval-tracked | current run |
+
+Two evaluation lessons: single generations at temperature 0.8 cannot rank
+checkpoints (v2 and v3 differ by 18 examples yet looked very different), so
+sampling draws 3 per prompt; and held-out loss is tracked during training so the
+best checkpoint is selected rather than assumed to be the last.
 
 ### Portability rule — the VM is disposable, the twin is not
 
