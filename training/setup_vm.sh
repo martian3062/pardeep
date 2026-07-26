@@ -13,7 +13,13 @@ export PATH="$HOME/.local/bin:$PATH"
 uv venv --python 3.11 .venv
 source .venv/bin/activate
 uv pip install --quiet "unsloth[cu124-torch260]" "trl>=0.12" "datasets>=3.0" \
-    "transformers>=4.46" "accelerate" "bitsandbytes" "peft" "huggingface_hub"
+    "transformers>=4.46" "accelerate" "bitsandbytes" "peft" "huggingface_hub" \
+    setuptools wheel  # triton compiles kernels via setuptools at import time
+
+# torchao arrives transitively but calls torch.utils._pytree.register_constant,
+# which only exists in torch>=2.7 — unsloth pins 2.6, so importing it breaks
+# transformers -> peft -> trl. Quantization here is bitsandbytes, so drop it.
+uv pip uninstall --python .venv/bin/python torchao 2>/dev/null || true
 
 python - <<'EOF'
 import torch

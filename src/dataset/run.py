@@ -30,6 +30,7 @@ def sft():
     table.add_column("metric")
     table.add_column("value", justify="right")
     table.add_row("conversations", str(stats.conversations))
+    table.add_row("named contacts (person-aware)", str(stats.named_contacts))
     table.add_row("[bold]training examples[/bold]", f"[bold]{n_train}[/bold]")
     table.add_row("eval examples", str(n_eval))
     for reason, n in sorted(stats.dropped.items(), key=lambda kv: -kv[1]):

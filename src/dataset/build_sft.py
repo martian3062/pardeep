@@ -19,6 +19,49 @@ from pathlib import Path
 
 from ..config import REPO_ROOT
 
+
+def load_relationship_map() -> dict[str, str]:
+    """contact -> "Roshan (close friend)" labels, from the Mind Model.
+
+    Pardeep speaks very differently to his mother, his closest friends and work
+    callers. Without naming the counterpart, every register averages into one
+    flat voice; with it, the twin can adapt the way he actually does.
+    """
+    path = REPO_ROOT / "src" / "twin" / "mind_model.json"
+    if not path.exists():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        people = doc.get("relationships", {}).get("people", [])
+    except (json.JSONDecodeError, AttributeError):
+        return {}
+    out: dict[str, str] = {}
+    for p in people:
+        contact = str(p.get("contact", "")).strip()
+        rel = str(p.get("likely_relationship", "")).strip().rstrip(".")
+        if not contact:
+            continue
+        # the model sometimes returns "A / B" for the same person
+        for alias in (a.strip() for a in contact.split("/")):
+            if alias:
+                out[alias.lower()] = f"{alias} ({rel})" if rel else alias
+    return out
+
+
+def counterpart_label(conversation_id: str, relationships: dict[str, str]) -> str:
+    """Human label for who the conversation is with."""
+    raw = conversation_id.split(":", 1)[-1].strip()
+    # call files are named "<contact> <date> <time>"; strip the timestamp
+    name = re.sub(r"\s*\d{4}-\d{2}-\d{2}[\s\d:-]*$", "", raw).strip()
+    # phone contact names carry sort-order junk: ".Jaya", "-...Pachi"
+    name = name.strip(" .-_") or raw
+    known = relationships.get(name.lower())
+    if known:
+        return known
+    if re.fullmatch(r"[+\d][\d\s-]{6,}", name):
+        return "an unsaved number"
+    return name
+
 # Whisper leftovers and content that teaches nothing about how he talks
 _NOISE = re.compile(r"^\W*$|^\[media\]$", re.IGNORECASE)
 
@@ -27,6 +70,7 @@ _NOISE = re.compile(r"^\W*$|^\[media\]$", re.IGNORECASE)
 class BuildStats:
     conversations: int = 0
     examples: int = 0
+    named_contacts: int = 0
     dropped: dict[str, int] = field(default_factory=dict)
 
     def drop(self, reason: str) -> None:
@@ -76,13 +120,16 @@ def build_examples(
     max_words: int = 250,
     max_per_conversation: int = 400,
     system_prompt: str = "",
+    relationships: dict[str, str] | None = None,
 ) -> tuple[list[dict], BuildStats]:
     stats = BuildStats(conversations=len(convs))
     examples: list[dict] = []
     seen: set[str] = set()
+    relationships = relationships or {}
 
     for conv_id, raw_turns in convs.items():
         turns = merge_consecutive(raw_turns)
+        who = counterpart_label(conv_id, relationships)
         from_conv = 0
         for i, (speaker, text) in enumerate(turns):
             if speaker != "me" or i == 0:
@@ -102,7 +149,9 @@ def build_examples(
                 continue
             seen.add(key)
 
-            messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+            preamble = f"You are talking to {who}." if who else ""
+            system = "\n\n".join(x for x in (system_prompt, preamble) if x)
+            messages = [{"role": "system", "content": system}] if system else []
             for s, t in context:
                 messages.append({"role": "user" if s == "other" else "assistant", "content": t})
             messages.append({"role": "assistant", "content": text})
@@ -159,6 +208,7 @@ def build(conn: sqlite3.Connection, cfg: dict) -> tuple[BuildStats, int, int]:
     system_prompt = persona_path.read_text(encoding="utf-8") if persona_path.exists() else ""
 
     convs = load_conversations(conn)
+    relationships = load_relationship_map() if dcfg.get("person_aware", True) else {}
     examples, stats = build_examples(
         convs,
         context_turns=dcfg.get("context_turns", 6),
@@ -166,7 +216,9 @@ def build(conn: sqlite3.Connection, cfg: dict) -> tuple[BuildStats, int, int]:
         max_words=dcfg.get("max_words", 250),
         max_per_conversation=dcfg.get("max_per_conversation", 400),
         system_prompt=system_prompt,
+        relationships=relationships,
     )
+    stats.named_contacts = len(relationships)
     n_train, n_eval = write_splits(
         examples, REPO_ROOT / "data" / "datasets", dcfg.get("eval_fraction", 0.05)
     )

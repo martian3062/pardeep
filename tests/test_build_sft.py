@@ -37,7 +37,8 @@ def test_build_examples_shape_and_context():
     examples, stats = build_examples(convs, context_turns=6, system_prompt="PERSONA")
     assert stats.examples == 2
     first = examples[0]["messages"]
-    assert first[0] == {"role": "system", "content": "PERSONA"}
+    assert first[0]["role"] == "system"
+    assert first[0]["content"].startswith("PERSONA")  # + person-aware preamble
     assert first[1]["role"] == "user"  # the other person speaks
     assert first[-1] == {"role": "assistant", "content": "kuch nahi yaar bas timepass"}
     # the second example carries the earlier turns as context
