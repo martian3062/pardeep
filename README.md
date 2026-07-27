@@ -26,7 +26,7 @@ flowchart TB
         PARSE[WhatsApp parser]
         WHISPER[faster-whisper large-v3-turbo<br/>batched, crash-quarantining supervisor]
         DIAR[pyannote diarization +<br/>voice fingerprint: me vs other]
-        VLM[Phase 4b: EXIF/date mapping +<br/>local VLM captioning Qwen2.5-VL]
+        VLM[Phase 4b: EXIF/date mapping +<br/>local VLM captioning Qwen3-VL]
         DB[(messages.db<br/>unified SQLite store)]
     end
 
@@ -198,7 +198,7 @@ Every pic/vid from the archives becomes a timestamped episodic memory with full 
 ```mermaid
 flowchart LR
     P[📸 photos + videos] --> META[metadata extraction<br/>EXIF date/GPS · filename dates<br/>IMG-20190421-WA0001 · folder hints 'wedding']
-    P --> CAP[local VLM captioning<br/>Qwen2.5-VL-3B on laptop GPU<br/>“what is happening in this pic?”]
+    P --> CAP[local VLM captioning<br/>Qwen3-VL-4B 4-bit on laptop GPU<br/>“what is happening in this pic?”]
     META --> PM[(photo_memories<br/>date · place · caption · people)]
     CAP --> PM
     FACE[Phase 8 InsightFace<br/>face clustering] -.who is in it.-> PM
@@ -210,6 +210,36 @@ flowchart LR
   people in the knowledge graph; EXIF/filename anchors it in time. Photos never leave the PC.
 - Batch job runs overnight on the laptop GPU; captions + embeddings land in LanceDB like any
   other memory, retrievable by the twin in conversation.
+
+**Two filters decide what actually becomes a memory**, both learned the hard way:
+
+*Provenance* — of 7,584 images in the archives, most are not his. Facebook caches and screenshots
+outnumber his own photographs. Feeding them in would repeat the video mistake, where forwarded
+entertainment taught the twin song lyrics. Folders are ranked, and only rank ≥ 2 is captioned:
+
+| rank | meaning | count |
+| --- | --- | --- |
+| 3 | his camera roll, DCIM, images he **sent** | 1,257 |
+| 2 | events, albums, collages | 199 |
+| 1 | received WhatsApp images — mostly forwards | 3,313 |
+| 0 | Facebook cache, screenshots | 2,815 |
+
+*Date trust* — a photo's date comes from EXIF, then the filename (`IMG-20190421-WA0001`), then
+mtime. **mtime is never trusted**: archive copies carry the day they were pulled off Drive, which
+dated 3,549 photos to "this week" and would have rewritten his timeline — the same failure that
+once landed every call recording on a single afternoon. Photos with only an mtime inherit the
+**median date of their folder** (a folder is usually one period of life) when at least three
+neighbours carry real dates; the rest stay undated and sort last rather than claiming a false date.
+
+Result: a real timeline peaking in **2017 (2,121 photos)** and 2018 (688).
+
+```
+python -m src.vision.run scan      # inventory + dates (no GPU)
+python -m src.vision.run dates     # folder-median imputation
+python -m src.vision.run caption   # Qwen3-VL-4B, 4-bit, laptop GPU
+python -m src.vision.run index     # into LanceDB alongside chats and calls
+python -m src.vision.run show -n 10  # spot-check captions
+```
 
 ### Phase 5 — Voice twin
 
@@ -403,7 +433,7 @@ uv run pytest -q
 - [X] **Phase 2** — SFT dataset (person-aware) + persona card + Mind Model
 - [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on the L4 VM (epoch-2.4 checkpoint kept)
 - [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers
-- [ ] Phase 4b — visual memories (6,862 photos: EXIF dates + local VLM captions)
+- [~] Phase 4b — visual memories (7,584 scanned, 6,042 dated, 1,456 worth captioning)
 - [ ] Phase 5 — voice clone + mic loop
 - [ ] Phase 6 — app: Litestar API + TanStack Start UI + marimo inspector notebooks
 - [ ] Phase 7 — daily diary + DPO active learning
