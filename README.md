@@ -246,12 +246,32 @@ neighbours carry real dates; the rest stay undated and sort last rather than cla
 Result: a real timeline peaking in **2017 (2,121 photos)** and 2018 (688).
 
 ```
-python -m src.vision.run scan      # inventory + dates (no GPU)
-python -m src.vision.run dates     # folder-median imputation
-python -m src.vision.run caption   # Qwen3-VL-4B, 4-bit, laptop GPU
-python -m src.vision.run index     # into LanceDB alongside chats and calls
-python -m src.vision.run show -n 10  # spot-check captions
+python -m src.vision.run scan               # inventory + dates (no GPU)
+python -m src.vision.run dates --redate      # recompute dates from files, impute the rest
+python -m src.vision.run dedupe              # collapse byte-identical copies
+python -m src.vision.run caption             # Qwen3-VL-4B, 4-bit, laptop GPU
+python -m src.vision.run polish --requeue    # strip boilerplate; redo truncated captions
+python -m src.vision.run index --cpu         # into LanceDB alongside chats and calls
+python -m src.vision.run show -n 10          # spot-check captions
 ```
+
+**Caption quality was measured, not assumed.** An audit of the first 931 found 10% truncated
+mid-sentence at the 90-token cap — and consistently the richest ones, since a banner read as
+`रेल डिस्ट्रिब्यूटर कार्यकारी…` costs several tokens per word. It also found 247 sentences that said only
+what the photo does *not* contain (`No other people or readable text are visible.` appeared 75
+times), which makes unrelated photos embed alike. After raising the cap and stripping absence
+sentences: truncation 10.2% → **0.6%**, repeated boilerplate 247 → **0**.
+
+What it can recall, from photos that carried no metadata at all:
+
+> *"sitting on a motorcycle"* → **23 Mar 2019** — a man in a white shirt on a motorcycle, licence
+> plate `CHO1AX4937`, another man leaning over a second bike
+>
+> *"school or college classroom"* → **22 Apr 2024** — two men seated in a classroom, one in a
+> turban, projector on the wall, students behind
+
+About 9% of captioned photos still look like forwards rather than moments — memes with watermarks,
+photos of a phone screen showing a WhatsApp chat. They rank as his because he *sent* them.
 
 ### Phase 5 — Voice twin
 
@@ -445,8 +465,9 @@ uv run pytest -q
 - [X] **Phase 2** — SFT dataset (person-aware) + persona card + Mind Model
 - [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on the L4 VM (epoch-2.4 checkpoint kept)
 - [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers
-- [~] **Phase 4b** — visual memories: 7,584 scanned → 6,357 dated → 149 duplicates collapsed →
-  1,307 captioned by Qwen3-VL-4B on the laptop GPU and indexed alongside chats and calls
+- [X] **Phase 4b** — visual memories: 7,584 scanned → 6,357 dated → 149 duplicates collapsed →
+  **1,307 captioned** by Qwen3-VL-4B on the laptop GPU (0 failures) and indexed alongside chats
+  and calls. Memory now holds **5,662** entries: 4,307 episodic, 1,307 photo, 48 facts.
 - [ ] Phase 5 — voice clone + mic loop
 - [ ] Phase 6 — app: Litestar API + TanStack Start UI + marimo inspector notebooks
 - [ ] Phase 7 — daily diary + DPO active learning
