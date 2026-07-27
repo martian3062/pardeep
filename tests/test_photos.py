@@ -145,6 +145,46 @@ def test_an_image_with_no_faces_is_not_labelled():
     assert not memory_text(None, "", "not yet scanned", -1).startswith("[photo of")
 
 
+def test_forwards_are_recognised_by_their_furniture():
+    """Regression: face count does NOT separate a joke from a memory — memes have
+    faces too, which is why boosting photos-with-people left the defect in place.
+    What separates them is the watermark, the overlay text, the screenshot frame."""
+    forwards = [
+        'A watermark reads "FB.COM/AVPJOKES," and a man in a suit with text overlay says...',
+        "A screenshot of a WhatsApp chat showing messages in Hindi about attendance.",
+        "A meme showing a cartoon boy holding a sign.",
+        "The image has text overlay at the top reading 'MOMENT WHEN'.",
+        # the captioner varies the wording; an adjacent-only pattern let this
+        # exact meme through into a question asking for photos of people
+        "The image contains overlaid Hindi text reading 'log kahte hain nafrat buri cheez hai'.",
+        "A photo with superimposed white text across the top.",
+        "A fake tweet attributed to Virat Kohli.",
+        "A good morning greeting card with flowers.",
+    ]
+    for caption in forwards:
+        assert ph.looks_forwarded(caption), caption
+
+
+def test_real_photographs_are_not_flagged_as_forwards():
+    real = [
+        "Two men are posing in front of a green vintage steam locomotive display.",
+        "A young child wearing a bright orange turban smiles at the camera.",
+        "Several men are gathered outside a building, eating food from plates.",
+        "A green field of tall grass stretching toward a line of trees.",
+        # a sign in the scene is not overlay text
+        "A blue sign with Hindi text is visible on the brick building behind them.",
+    ]
+    for caption in real:
+        assert not ph.looks_forwarded(caption), caption
+
+
+def test_a_forward_says_what_it_is():
+    text = memory_text(datetime(2019, 3, 23), "", "A meme with a watermark", 2, is_forward=True)
+    assert text.startswith("[forwarded image, not his own photo]")
+    # the people-count label would wrongly dress a joke up as a photo of friends
+    assert "[photo of" not in text
+
+
 def _write_jpeg_with_exif(path, *, original=None, modified=None):
     """A real JPEG carrying the requested EXIF date tags."""
     from PIL import Image

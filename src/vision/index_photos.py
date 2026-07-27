@@ -25,7 +25,11 @@ UNDATED = datetime(1980, 1, 1)
 
 
 def memory_text(
-    taken_at: datetime | None, folder: str, caption: str, face_count: int = -1
+    taken_at: datetime | None,
+    folder: str,
+    caption: str,
+    face_count: int = -1,
+    is_forward: bool = False,
 ) -> str:
     """Compose the retrievable sentence. Undated photos simply omit the date
     rather than claiming a wrong one.
@@ -43,6 +47,10 @@ def memory_text(
         parts.append(folder)
     prefix = ", ".join(parts)
     body = f"{prefix}: {caption}" if prefix else caption
+    if is_forward:
+        # said plainly so the twin describes it as a forward instead of offering
+        # a joke image as a memory of his life
+        return f"[forwarded image, not his own photo] {body}"
     if face_count > 0:
         who = "1 person" if face_count == 1 else f"{face_count} people"
         body = f"[photo of {who}] {body}"
@@ -53,9 +61,10 @@ def run(db_path: Path, store: MemoryStore | None = None, cpu: bool = False) -> i
     conn = sqlite3.connect(db_path)
     ph.ensure_schema(conn)
 
+    ph.flag_forwards(conn)
     rows = conn.execute(
         """SELECT path, taken_at, date_source, folder_hint, caption,
-                  COALESCE(face_count, -1)
+                  COALESCE(face_count, -1), COALESCE(is_forward, 0)
            FROM photos WHERE caption IS NOT NULL AND dupe_of IS NULL
            ORDER BY taken_at"""
     ).fetchall()
@@ -74,17 +83,22 @@ def run(db_path: Path, store: MemoryStore | None = None, cpu: bool = False) -> i
     memories: list[Memory] = []
     undated = 0
     with_people = 0
-    for path, taken_at, source, folder, caption, face_count in rows:
+    forwards = 0
+    for path, taken_at, source, folder, caption, face_count, is_forward in rows:
         dated = source in ph.TRUSTED_SOURCES and taken_at
         when = datetime.fromisoformat(taken_at) if dated else None
         if not dated:
             undated += 1
         if face_count > 0:
             with_people += 1
+        if is_forward:
+            forwards += 1
         memories.append(
             Memory(
-                text=memory_text(when, folder or "", caption, face_count),
-                kind="photo",
+                text=memory_text(when, folder or "", caption, face_count, bool(is_forward)),
+                # a forward is something he passed on, not somewhere he was; it
+                # stays searchable but is a different kind of thing
+                kind="forward" if is_forward else "photo",
                 source="photo",
                 # no believable date: sort last rather than claim it is recent
                 timestamp=when or UNDATED,

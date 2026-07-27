@@ -161,6 +161,37 @@ def scan(roots: list[Path]) -> list[Photo]:
     return photos
 
 
+# A forwarded joke is not a memory of his life, but it looks like one to
+# retrieval: meme captions are dense with quoted text, watermarks and named
+# people, while a real photograph's caption is one plain sentence. Asked to
+# describe an old photo, the twin answered that it had none while holding 1,307.
+#
+# Face count does NOT separate them — memes contain faces too, which is why
+# boosting photos-with-people left the defect in place. What separates them is
+# the furniture of a forward: a watermark, overlay text, a screenshot frame.
+_FORWARD_SIGNALS = (
+    re.compile(r"\b(?:FB|WWW)\.[A-Z0-9]+\.(?:COM|IN)\b", re.I),
+    re.compile(r"\bwatermark(?:ed)?\b", re.I),
+    re.compile(r"\b(?:meme|joke|cartoon|comic strip|caption reads)\b", re.I),
+    # the captioner varies the wording — "overlaid Hindi text", "text overlay at
+    # the bottom", "superimposed white text" — so a word is allowed in between,
+    # which an adjacent-only pattern missed and let a meme through
+    re.compile(r"\b(?:overlaid|overlay(?:ing)?|superimposed)\s+(?:\w+\s+){0,2}text\b", re.I),
+    re.compile(r"\btext\s+(?:overlay|superimposed)\b|\bimpact font\b", re.I),
+    re.compile(r"\btext (?:at the (?:top|bottom)|across the (?:top|image))\b", re.I),
+    re.compile(r"\bscreenshot\b|\bwhatsapp (?:chat|conversation)\b|\bsocial media post\b", re.I),
+    re.compile(r"\b(?:fake )?tweet\b|\bfacebook post\b|\binstagram post\b", re.I),
+    re.compile(r"\bgood\s*morning\b|\bgreeting card\b|\bmotivational (?:poster|quote)\b", re.I),
+)
+
+
+def looks_forwarded(caption: str) -> bool:
+    """Does this caption describe a forward rather than a moment?"""
+    if not caption:
+        return False
+    return any(rx.search(caption) for rx in _FORWARD_SIGNALS)
+
+
 _TABLE = """
 CREATE TABLE IF NOT EXISTS photos (
     id INTEGER PRIMARY KEY,
@@ -182,7 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_photos_dupe ON photos(dupe_of);
 
 # columns added after the table first shipped; CREATE TABLE IF NOT EXISTS will
 # not add them to a database that already holds hours of captioning work
-_ADDED_COLUMNS = {"dupe_of": "INTEGER"}
+_ADDED_COLUMNS = {"dupe_of": "INTEGER", "is_forward": "INTEGER"}
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -369,6 +400,16 @@ def find_duplicates(conn: sqlite3.Connection, min_rank: int = 2) -> int:
         marked += len(copies)
     conn.commit()
     return marked
+
+
+def flag_forwards(conn: sqlite3.Connection) -> int:
+    """Mark captioned photos that describe a forward rather than a moment."""
+    ensure_schema(conn)
+    rows = conn.execute("SELECT id, caption FROM photos WHERE caption IS NOT NULL").fetchall()
+    flags = [(1 if looks_forwarded(c) else 0, i) for i, c in rows]
+    conn.executemany("UPDATE photos SET is_forward = ? WHERE id = ?", flags)
+    conn.commit()
+    return sum(f for f, _ in flags)
 
 
 def pending_captions(conn: sqlite3.Connection, min_rank: int = 2) -> list[tuple[int, str]]:

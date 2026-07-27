@@ -33,9 +33,27 @@ _WANTS_PHOTO = re.compile(
 # surface an irrelevant one.
 PHOTO_INTENT_BOOST = 1.6
 
+# Enough to put every real photograph ahead of a forward on a photo question,
+# without hiding forwards from someone who asks about a meme directly.
+FORWARD_PENALTY = 0.35
+
+
+# "meri koi purani photo describe kar" asks for HIS photograph. A forward is by
+# definition not his photograph, so it should be excluded rather than merely
+# demoted — penalising was not enough, because a meme caption quoting a punchline
+# matches a vague request far better than "a green field of tall grass" does.
+_OWN_PHOTO = re.compile(
+    r"\b(?:meri|mere|mera|apni|apne|apna|khud|my|mine|our)\b", re.IGNORECASE
+)
+
 
 def wants_photos(query: str) -> bool:
     return bool(_WANTS_PHOTO.search(query))
+
+
+def wants_own_photos(query: str) -> bool:
+    """Asking for his own pictures, not for something he once forwarded."""
+    return wants_photos(query) and bool(_OWN_PHOTO.search(query))
 
 
 @dataclass
@@ -117,9 +135,36 @@ def gather(
         return []
 
     if wants_photos(query):
+        # A general search returns whatever matches wording, and for a photo
+        # question that is mostly forwards and chat threads: filtering them out
+        # afterwards left one query with no photographs at all. So photographs
+        # are fetched in their own right rather than hoped for.
+        own = wants_own_photos(query)
+        kinds = ("photo",) if own else ("photo", "forward")
+        extra = store.search(
+            query,
+            limit=limit * 2,
+            kinds=kinds,
+            max_trust=trust,
+            time_range=(window[0].timestamp(), window[1].timestamp()) if window else None,
+        )
+        seen = {(r.get("timestamp"), r.get("text", "")[:60]) for r in rows}
+        rows += [r for r in extra if (r.get("timestamp"), r.get("text", "")[:60]) not in seen]
+        if own:
+            real = [r for r in rows if r.get("kind") != "forward"]
+            if real:  # never empty the answer just to exclude forwards
+                rows = real
+
+    if wants_photos(query):
         for r in rows:
             if r.get("kind") == "photo":
                 r["score"] *= PHOTO_INTENT_BOOST
+            elif r.get("kind") == "forward":
+                # Asked for "a photo of mine", a forwarded joke is the wrong
+                # answer even though its text-dense caption matches well. It
+                # stays reachable — he did share it — but never ahead of a real
+                # photograph.
+                r["score"] *= FORWARD_PENALTY
         rows.sort(key=lambda r: r["score"], reverse=True)
     chosen = _diversify(rows, limit, redundancy_penalty)
     return [
