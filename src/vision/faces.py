@@ -74,19 +74,50 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def analyser():
-    """buffalo_l on CPU by default — detection is fast and the GPU is often busy."""
+def _enable_cuda_dlls() -> None:
+    """Let onnxruntime-gpu find CUDA and cuDNN.
+
+    Python 3.8+ stopped searching PATH for DLLs on Windows, and there is no
+    separate CUDA install here — the cuDNN 9 and cuBLAS 12 libraries live inside
+    torch/lib. Without this, onnxruntime-gpu loads, reports CUDAExecutionProvider
+    as available, and then silently falls back to CPU at session creation.
+    """
+    import os
+
+    try:
+        import torch
+
+        lib = Path(torch.__file__).resolve().parent / "lib"
+        if lib.exists() and hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(str(lib))
+    except Exception:
+        pass
+
+
+def analyser(prefer_gpu: bool = True):
+    """buffalo_l, on the GPU when the CUDA provider actually initialises."""
+    if prefer_gpu:
+        _enable_cuda_dlls()
+
     import onnxruntime as ort
     from insightface.app import FaceAnalysis
 
-    providers = (
-        ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        if "CUDAExecutionProvider" in ort.get_available_providers()
-        else ["CPUExecutionProvider"]
-    )
+    use_cuda = prefer_gpu and "CUDAExecutionProvider" in ort.get_available_providers()
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if use_cuda else [
+        "CPUExecutionProvider"
+    ]
     app = FaceAnalysis(name=MODEL_NAME, root=str(MODEL_ROOT), providers=providers)
-    app.prepare(ctx_id=0 if "CUDA" in providers[0] else -1, det_size=(640, 640))
+    app.prepare(ctx_id=0 if use_cuda else -1, det_size=(640, 640))
     return app
+
+
+def active_provider(app) -> str:
+    """What the session really ended up on, not what was requested."""
+    try:
+        model = next(iter(app.models.values()))
+        return model.session.get_providers()[0]
+    except Exception:
+        return "unknown"
 
 
 def detect(app, path: Path) -> list[Face]:

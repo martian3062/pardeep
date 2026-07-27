@@ -37,7 +37,12 @@ voice = [
 ]
 faces = [
     "insightface>=0.7.3",   # buffalo_l detection + recognition, local ONNX
-    "onnxruntime>=1.18",
+    # The GPU build: on CPU the archive scan runs at 0.3 photos/sec (~1 hour).
+    # Capped below 1.23 because newer wheels link CUDA 13 (cublasLt64_13.dll)
+    # while torch 2.6 ships CUDA 12 — with a 13 wheel the CUDA provider loads,
+    # reports itself available, then silently falls back to CPU at session
+    # creation, which looks like success and runs at half the CPU speed.
+    "onnxruntime-gpu>=1.19,<1.23",
 ]
 vision = [
     "transformers>=4.57",
