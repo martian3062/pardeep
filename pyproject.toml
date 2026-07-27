@@ -32,6 +32,9 @@ diarize = [
 app = [
     "litestar[standard]>=2.12",
 ]
+voice = [
+    "sounddevice>=0.5",  # mic capture and playback
+]
 vision = [
     "transformers>=4.57",
     "accelerate>=1.0",
@@ -44,7 +47,7 @@ vision = [
 package = false
 # every group is default: otherwise `uv run --group X` uninstalls the others,
 # which silently broke the memory index mid-build once
-default-groups = ["dev", "transcribe", "diarize", "memory", "vision", "app"]
+default-groups = ["dev", "transcribe", "diarize", "memory", "vision", "app", "voice"]
 
 [[tool.uv.index]]
 name = "pytorch-cu124"

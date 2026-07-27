@@ -63,6 +63,74 @@ def cmd_inspect(args) -> None:
     console.print(table)
 
 
+def cmd_clone(args) -> None:
+    from . import tts
+
+    clips = sorted(ref.OUT_DIR.glob("*.wav"))
+    if not clips:
+        console.print("[red]no reference clips — run `refs` first[/red]")
+        return
+    existing = tts.saved_voice()
+    if existing and not args.replace:
+        console.print(f"[yellow]already cloned: {existing.name} ({existing.voice_id})[/yellow]")
+        console.print("  pass --replace to make a new one")
+        return
+    total = sum(c.stat().st_size for c in clips)
+    console.print(
+        f"uploading [bold]{len(clips)}[/bold] clips ({total/1e6:.1f} MB) to ElevenLabs — "
+        "this is the one thing that leaves the machine"
+    )
+    voice = tts.clone(clips)
+    console.print(f"[green]cloned:[/green] {voice.name}  id={voice.voice_id}")
+
+
+def cmd_say(args) -> None:
+    from . import tts
+
+    engine = tts.ElevenLabs()
+    out = tts.OUT_DIR / f"{args.name}.mp3"
+    engine.say(args.text, out)
+    console.print(f"[green]wrote[/green] {out}  [dim]({engine.model_id})[/dim]")
+
+
+def cmd_forget(args) -> None:
+    from . import tts
+
+    voice = tts.saved_voice()
+    if not voice:
+        console.print("no cloned voice stored")
+        return
+    ok = tts.delete(voice.voice_id)
+    console.print("[green]deleted from ElevenLabs[/green]" if ok else "[red]delete failed[/red]")
+
+
+def cmd_devices(args) -> None:
+    from .listen import list_devices
+
+    console.print(list_devices())
+
+
+def cmd_talk(args) -> None:
+    from .loop import VoiceTwin
+
+    VoiceTwin(device=args.device, speak=not args.mute).run(counterpart=args.as_person)
+
+
+def cmd_hear(args) -> None:
+    """Mic + transcription only — check the ears before wiring the mouth."""
+    from .listen import Ears
+
+    ears = Ears(device=args.device)
+    console.print("[dim]say something…[/dim]")
+    utt = ears.listen()
+    if utt is None:
+        console.print("[yellow]heard nothing[/yellow]")
+        return
+    text, lang = ears.transcribe(utt)
+    console.print(f"[dim]{utt.seconds:.1f}s, detected {lang}[/dim]")
+    console.print(f"[bold]{text or '(nothing intelligible)'}[/bold]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="src.voice.run")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -80,6 +148,29 @@ def main() -> None:
     p_refs.set_defaults(func=cmd_refs)
 
     sub.add_parser("inspect", help="show the selected clips").set_defaults(func=cmd_inspect)
+
+    p_clone = sub.add_parser("clone", help="create the cloned voice (uploads the clips)")
+    p_clone.add_argument("--replace", action="store_true")
+    p_clone.set_defaults(func=cmd_clone)
+
+    p_say = sub.add_parser("say", help="speak a line in his voice")
+    p_say.add_argument("text")
+    p_say.add_argument("--name", default="sample")
+    p_say.set_defaults(func=cmd_say)
+
+    sub.add_parser("forget", help="delete the clone from ElevenLabs").set_defaults(func=cmd_forget)
+
+    sub.add_parser("devices", help="list audio devices").set_defaults(func=cmd_devices)
+
+    p_hear = sub.add_parser("hear", help="mic + local transcription only")
+    p_hear.add_argument("--device", type=int, default=None)
+    p_hear.set_defaults(func=cmd_hear)
+
+    p_talk = sub.add_parser("talk", help="full voice conversation with the twin")
+    p_talk.add_argument("--device", type=int, default=None, help="input device index")
+    p_talk.add_argument("--as-person", default="", help="who the twin is talking to")
+    p_talk.add_argument("--mute", action="store_true", help="text replies, no speech")
+    p_talk.set_defaults(func=cmd_talk)
 
     args = parser.parse_args()
     args.func(args)
