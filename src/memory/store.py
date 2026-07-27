@@ -139,6 +139,7 @@ class MemoryStore:
         max_trust: str = "secret",
         recency_halflife_days: float = 540.0,
         recency_weight: float = 0.15,
+        time_range: tuple[float, float] | None = None,
     ) -> list[dict]:
         """Semantic search with a recency tilt.
 
@@ -156,6 +157,11 @@ class MemoryStore:
         conditions = [f"trust IN ({', '.join(repr(t) for t in allowed)})"]
         if kinds:
             conditions.append(f"kind IN ({', '.join(repr(k) for k in kinds)})")
+        if time_range:
+            # a question naming a year is asking about that year, not about
+            # whatever happens to be worded similarly
+            lo, hi = time_range
+            conditions.append(f"ts_epoch >= {lo} AND ts_epoch < {hi}")
 
         vector = self.embedder.encode([query])[0]
         rows = (
