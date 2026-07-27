@@ -245,7 +245,7 @@ neighbours carry real dates; the rest stay undated and sort last rather than cla
 
 Result: a real timeline peaking in **2017 (2,121 photos)** and 2018 (688).
 
-```
+```bash
 python -m src.vision.run scan               # inventory + dates (no GPU)
 python -m src.vision.run dates --redate      # recompute dates from files, impute the rest
 python -m src.vision.run dedupe              # collapse byte-identical copies
@@ -276,10 +276,53 @@ photos of a phone screen showing a WhatsApp chat. They rank as his because he *s
 ### Phase 5 — Voice twin
 
 ```
-mic → silero-VAD → faster-whisper (STT) → twin brain → F5-TTS/XTTS cloned voice → speaker
+mic → silero-VAD → faster-whisper (local) → twin brain → cloned voice → speaker
 ```
 
-Zero-shot clone from my voice-note clips first; fine-tuned GPT-SoVITS if Hinglish quality needs it.
+```bash
+python -m src.voice.run refs     # clean single-speaker reference clips
+python -m src.voice.run clone    # create the voice
+python -m src.voice.run talk     # speak to it, hear it answer as me
+python -m src.voice.run forget   # delete the clone from their servers
+```
+
+**Building the reference audio was the hard part, not the cloning.** Half the clips set aside
+during ingestion are call recordings containing the other person too, and cloning from those
+blends two voices into one belonging to nobody. Matching against the Phase 1b voice embedding
+fixes that — but speaker match alone chose windows that were *his voice but barely speech*: two
+of six transcribed to nothing and one to the `सब्सक्राइब` artifact Whisper hallucinates over noise.
+A cloning model copies whatever it is handed, so silero-VAD now scores how much of a window is
+actually speech (0.81–0.95 across the chosen clips).
+
+The 32.7 hours of diarized "me" segments turned out to be the *worse* source, for a reason worth
+recording: the enrolled embedding was built from voice notes, so the same speaker scores **~0.65
+on a note and ~0.25 on a phone call**. The embedding separates channels as much as speakers, and
+calls are 8kHz narrowband against the notes' 16kHz.
+
+**Engine choice — decided against evidence, not preference.** Nine agents surveyed and then
+adversarially re-checked every local option. All four were disqualified:
+
+| candidate | why it fails here |
+| --- | --- |
+| GPT-SoVITS | no Hindi or Punjabi in any version, no path to it |
+| XTTS-v2 | Hindi broken in its own tokenizer; Coqui shut down |
+| Chatterbox | poor Hindi, confirmed open issue |
+| IndicF5 | calls `torch.compile` → needs Triton, absent on Windows/torch 2.6; pins `transformers<4.50` vs our 4.57; its Roman→Devanagari front-end rests on IndicXlit (2022) → fairseq, **archived March 2026** |
+
+**ElevenLabs `eleven_v3`** is the only engine found, local or cloud, that supports Punjabi at all.
+Round-tripped through Whisper, Devanagari, Gurmukhi, English and Roman Hinglish all come back
+intelligible — `chal thik hai bro, kal milte hain fir` → चल ठीक है ब्रो, कल मिलते हैं फिर. That last case
+is exactly what the dead transliteration dependency existed to solve.
+
+> **The privacy line moves here, and only here.** Creating the clone uploaded ~48s of me speaking;
+> synthesis uploads the reply text. The **microphone path stays local** — silero-VAD and Whisper
+> run on this machine and nothing recorded leaves. The archive, photos and chats never leave.
+> `voice forget` deletes the clone, so the trade is reversible, and engines sit behind one
+> interface so a local model can replace this without touching the caller.
+
+Turn-taking ends on *sustained* silence rather than the first quiet frame, because the persona
+card is explicit that he pauses mid-thought constantly ("तो फिर उसके बाद... वो ही... मतलब...") — a
+first-frame cutoff would talk over him.
 
 ### Phase 6 — App (Litestar + TanStack Start)
 
@@ -301,7 +344,7 @@ retrieved snippets only. A local model counts as "the twin" only when its name m
 fine-tune — Ollama here also holds granite, gemma and a coder model, and serving one of those
 would answer fluently in someone else's voice, which is worse than having no local backend.
 
-```
+```bash
 uv run litestar --app app.api.main:app run --port 8100   # API
 cd app/web && npm run dev                                # UI on :3000, proxies /api
 python -m src.twin.run chat                              # or just talk in the terminal
@@ -344,6 +387,30 @@ flowchart LR
     R --> FB{👍 / 👎 /<br/>“I'd say it like this”}
     FB -->|preference pairs| W[weekly batch] -->|monthly DPO re-train| NEW[new GGUF<br/>hot-swapped into Ollama]
 ```
+
+```bash
+python -m src.diary.run write "aaj lab me poora din gaya"
+python -m src.diary.run speak      # say it instead; transcribed locally
+python -m src.diary.run digest     # summarise the week in my voice
+python -m src.diary.run export     # write a DPO batch
+```
+
+The archive stops at the day it was exported; everything the twin learns after that arrives here.
+An entry is indexed into the same store as chats and photos, so it is recallable in the same
+breath it is written — and tagged **`secret`**, stricter than anything else, so a guest session
+filters diary entries out *before* retrieval rather than after generation.
+
+**Feedback is a rewrite box, not a thumb.** A thumbs-down says something was wrong but not what
+right looks like, and DPO needs `(prompt, chosen, rejected)`. So the UI affordance is *"I'd say it
+differently"*. Pairs that barely differ are dropped — preferring X over almost-X trains a model on
+noise.
+
+**A spoken year does not survive the microphone.** Asked "2017 june me kya kar raha tha" aloud,
+Whisper wrote the year as words (`तु अगा तत्रा जून में`), the date filter never fired, and the twin
+truthfully reported no memory of a year it holds 2,100 photos from. The retrieval was correct and
+the answer honest — the number was simply gone. Spoken years are now recovered in both forms Hindi
+and Punjabi use (`दो हज़ार सत्रह`, digit-by-digit), and only when the result lands inside the range the
+archive covers, so `सत्रह लोग आए` stays *seventeen people*.
 
 ### Phase 8 — Vision: face recognition + expression awareness
 
@@ -495,14 +562,17 @@ uv run pytest -q
 - [X] **Phase 1b** — call diarization (pyannote) + speaker ID via voice-note enrollment + TTS reference clips
 - [X] **Phase 2** — SFT dataset (person-aware) + persona card + Mind Model
 - [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on the L4 VM (epoch-2.4 checkpoint kept)
-- [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers
+- [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers,
+  hybrid dense+BM25 retrieval with a bounded recency tilt
 - [X] **Phase 4b** — visual memories: 7,584 scanned → 6,357 dated → 149 duplicates collapsed →
   **1,307 captioned** by Qwen3-VL-4B on the laptop GPU (0 failures) and indexed alongside chats
   and calls. Memory now holds **5,662** entries: 4,307 episodic, 1,307 photo, 48 facts.
-- [ ] Phase 5 — voice clone + mic loop
+- [X] **Phase 5** — voice twin: reference clips scored on speaker match *and* speech content,
+  cloned voice speaking Hindi/Punjabi/English/Roman-Hinglish, fully local mic path
 - [~] **Phase 6** — orchestrator (twin + memory + persona + Mind Model), Litestar API, TanStack
   Start chat UI with recalled photos inline, hybrid dense+BM25 retrieval. Remaining: marimo
   notebooks, streaming, Diary/Notes tabs
-- [ ] Phase 7 — daily diary + DPO active learning
+- [X] **Phase 7** — daily diary (voice or text) → memory, rewrite-based feedback → DPO batches,
+  weekly digests. Diary entries are `secret`-tier, invisible to guests
 - [ ] Phase 8 — vision: face ID unlock + expression/mood-aware twin + mood timeline
 - [ ] Phase 9 — guardrails: owner/guest modes, trust-tier memory, PII output guard, audit log
