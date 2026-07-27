@@ -7,6 +7,8 @@ script to continue instead of something it knows.
 """
 from __future__ import annotations
 
+from ..guard.injection import HARDENING
+from ..guard.persona import sanitize_persona
 from .identity import Identity, render_behaviour, render_counterpart
 from .retrieve import Snippet
 from .script import language_rule
@@ -38,15 +40,21 @@ def build_system_prompt(
     mood_rule: str = "",
 ) -> str:
     parts = [GUEST_PREAMBLE if guest else OWNER_PREAMBLE]
+    if guest:
+        parts.append(HARDENING)
 
     if identity.persona:
-        parts.append(identity.persona.strip())
+        # The persona card describes how he talks AND names people, places and
+        # habits. A guest gets the style; the biography is not theirs to have.
+        parts.append(sanitize_persona(identity.persona) if guest else identity.persona.strip())
 
-    behaviour = render_behaviour(identity)
+    # The Mind Model is his values, decisions and blind spots — a guest gets none
+    # of it, however useful it would be for sounding like him.
+    behaviour = "" if guest else render_behaviour(identity)
     if behaviour:
         parts.append(f"## How you think\n\n{behaviour}")
 
-    if counterpart:
+    if counterpart and not guest:
         who = render_counterpart(identity, counterpart)
         if who:
             parts.append(f"## Who you are talking to\n\n{who}")

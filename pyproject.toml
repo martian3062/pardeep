@@ -35,6 +35,10 @@ app = [
 voice = [
     "sounddevice>=0.5",  # mic capture and playback
 ]
+guard = [
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+]
 faces = [
     "insightface>=0.7.3",   # buffalo_l detection + recognition, local ONNX
     # The GPU build: on CPU the archive scan runs at 0.3 photos/sec (~1 hour).
@@ -57,7 +61,7 @@ package = false
 # every group is default: otherwise `uv run --group X` uninstalls the others,
 # which silently broke the memory index mid-build once
 default-groups = [
-    "dev", "transcribe", "diarize", "memory", "vision", "app", "voice", "faces",
+    "dev", "transcribe", "diarize", "memory", "vision", "app", "voice", "faces", "guard",
 ]
 
 [[tool.uv.index]]
