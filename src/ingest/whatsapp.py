@@ -44,8 +44,18 @@ _DELETED_TEXTS = {
 _STRIP_CHARS = "‎‏﻿"
 
 
+# "<This message was edited>" is appended by WhatsApp, not typed by the person.
+# Leaving it in taught the twin to end replies with it — 18.5% of training
+# examples carried one. Stripped in _clean because it never carries meaning.
+_EDITED_MARKER = re.compile(r"\s*<This message was edited>\s*", re.IGNORECASE)
+# Media markers are stripped only AFTER media classification, so that a
+# media-only message is still recognised as one rather than becoming empty.
+_INLINE_MEDIA = re.compile(r"\s*<(?:Media omitted|attached:[^>]*)>\s*", re.IGNORECASE)
+
+
 def _clean(text: str) -> str:
-    return text.translate(str.maketrans("", "", _STRIP_CHARS)).strip()
+    text = text.translate(str.maketrans("", "", _STRIP_CHARS))
+    return _EDITED_MARKER.sub(" ", text).strip()
 
 
 def _is_media(text: str) -> bool:
@@ -132,7 +142,9 @@ def parse_file(
                 timestamp=ts,
                 speaker="me" if e["name"].lower() in me else "other",
                 speaker_name=e["name"],
-                text="[media]" if is_media else text,
+                # a message can mix a caption with an attachment marker; keep the
+                # caption, drop the marker
+                text="[media]" if is_media else _INLINE_MEDIA.sub(" ", text).strip(),
                 is_media=is_media,
             )
         )
