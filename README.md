@@ -297,7 +297,38 @@ Zero-shot clone from my voice-note clips first; fine-tuned GPT-SoVITS if Hinglis
 
 The **router** decides per message: casual/style reply → local fine-tuned model; complex
 reasoning → Claude or GPT API (best fit per task, mutual fallback) with persona card +
-retrieved snippets only.
+retrieved snippets only. A local model counts as "the twin" only when its name marks it as the
+fine-tune — Ollama here also holds granite, gemma and a coder model, and serving one of those
+would answer fluently in someone else's voice, which is worse than having no local backend.
+
+```
+uv run litestar --app app.api.main:app run --port 8100   # API
+cd app/web && npm run dev                                # UI on :3000, proxies /api
+python -m src.twin.run chat                              # or just talk in the terminal
+```
+
+**Retrieval took three corrections, each found by using it rather than testing it.**
+
+*A question that names a year was answered from the wrong years.* Asked "2017 june me kya kar raha
+tha", it returned recent chats and the twin truthfully said it did not remember a year it holds
+2,100 photos from — embeddings encode *what*, not *when*. Dates are parsed from the question and
+applied as a filter, falling back to the whole archive when a period is genuinely empty.
+
+*The recency tilt was tuned twice.* Multiplying similarity by `0.5^(age/540d)` scaled a 2017 memory
+to 0.014 of itself, so no photo could ever surface. Adding a flat 0.15 then over-corrected: real
+similarities run 0.1–0.4, so the bonus outweighed a decent match's entire similarity and a recent
+chat that merely said "college" beat the actual classroom photograph. It now scales —
+`similarity × (1 + 0.25 · recency)` — so it reorders near-ties and nothing else.
+
+*"dense + BM25" was documented before it was true.* In "college classroom ki koi photo hai kya mere
+paas" the Hinglish scaffolding outweighs the two words carrying the question. Keyword search now
+runs beside the vector search and the rankings are fused by reciprocal rank; a question containing
+"photo" also boosts photo memories, since a one-sentence caption competes against chat threads that
+repeat a word ten times.
+
+Serving photos to the browser means accepting a path from it, which is a directory-traversal hole by
+default. A requested path must resolve inside a known archive root and be an image, so
+`?path=../../.env` is a 404 rather than a file read.
 
 Dev = local (`litestar run` + `vite dev`); production = same box or home server, UI served
 by Litestar behind Caddy/Tailscale so the twin is reachable from your phone — data still
@@ -469,7 +500,9 @@ uv run pytest -q
   **1,307 captioned** by Qwen3-VL-4B on the laptop GPU (0 failures) and indexed alongside chats
   and calls. Memory now holds **5,662** entries: 4,307 episodic, 1,307 photo, 48 facts.
 - [ ] Phase 5 — voice clone + mic loop
-- [ ] Phase 6 — app: Litestar API + TanStack Start UI + marimo inspector notebooks
+- [~] **Phase 6** — orchestrator (twin + memory + persona + Mind Model), Litestar API, TanStack
+  Start chat UI with recalled photos inline, hybrid dense+BM25 retrieval. Remaining: marimo
+  notebooks, streaming, Diary/Notes tabs
 - [ ] Phase 7 — daily diary + DPO active learning
 - [ ] Phase 8 — vision: face ID unlock + expression/mood-aware twin + mood timeline
 - [ ] Phase 9 — guardrails: owner/guest modes, trust-tier memory, PII output guard, audit log
