@@ -130,7 +130,91 @@ async def reset() -> dict:
     return {"ok": True}
 
 
+@dataclass
+class DiaryRequest:
+    text: str
+    day: str = ""
+
+
+@dataclass
+class DiaryResponse:
+    entry_id: int
+    indexed: int
+    reaction: str
+
+
+@post("/api/diary")
+async def diary_write(data: DiaryRequest) -> DiaryResponse:
+    """Save a day, index it, and let the twin answer it."""
+    from src.diary import capture
+    from src.diary import store as st
+
+    conn = st.connect()
+    entry_id = capture.capture_text(conn, data.text, day=data.day or None)
+    indexed = capture.index_new(conn, store=twin().store)
+    reaction = twin().reply(f"Aaj ka mera diary entry: {data.text}").text
+    return DiaryResponse(entry_id=entry_id, indexed=indexed, reaction=reaction)
+
+
+@get("/api/diary")
+async def diary_list(limit: int = 30) -> list[dict]:
+    from src.diary import store as st
+
+    conn = st.connect()
+    conn.row_factory = __import__("sqlite3").Row
+    rows = conn.execute(
+        "SELECT id, day, created_at, source, text FROM entries ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@dataclass
+class CorrectionRequest:
+    prompt: str
+    said: str
+    instead: str = ""
+    verdict: str = "down"
+    counterpart: str = ""
+
+
+@post("/api/feedback")
+async def feedback(data: CorrectionRequest) -> dict:
+    """Log how he would have said it — the only signal that can retrain the twin."""
+    from src.diary import store as st
+
+    conn = st.connect()
+    fb_id = st.add_feedback(
+        conn,
+        st.Feedback(
+            prompt=data.prompt,
+            rejected=data.said,
+            chosen=data.instead,
+            verdict="down" if data.instead else data.verdict,
+            counterpart=data.counterpart,
+        ),
+    )
+    return {"id": fb_id, "trainable": bool(data.instead.strip())}
+
+
+@get("/api/diary/stats")
+async def diary_stats() -> dict:
+    from src.diary import store as st
+
+    return st.stats(st.connect())
+
+
 app = Litestar(
-    route_handlers=[chat, memory_search, photo, stats, reset],
+    route_handlers=[
+        chat,
+        memory_search,
+        photo,
+        stats,
+        reset,
+        diary_write,
+        diary_list,
+        diary_stats,
+        feedback,
+    ],
     cors_config=cors,
 )

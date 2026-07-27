@@ -57,3 +57,50 @@ export function photoUrl(path: string): string {
 export function resetConversation(): Promise<Response> {
   return fetch('/api/reset', { method: 'POST' })
 }
+
+export type DiaryEntry = {
+  id: number
+  day: string
+  created_at: string
+  source: string
+  text: string
+}
+
+export type DiaryResponse = { entry_id: number; indexed: number; reaction: string }
+
+export async function writeDiary(text: string): Promise<DiaryResponse> {
+  const res = await fetch('/api/diary', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) throw new Error(`diary failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function listDiary(limit = 30): Promise<DiaryEntry[]> {
+  const res = await fetch(`/api/diary?limit=${limit}`)
+  if (!res.ok) throw new Error(`diary list failed: ${res.status}`)
+  return res.json()
+}
+
+/** A rewrite is the only feedback that can retrain the twin; a bare thumb cannot. */
+export async function sendCorrection(input: {
+  prompt: string
+  said: string
+  instead?: string
+  verdict?: 'up' | 'down'
+}): Promise<{ id: number; trainable: boolean }> {
+  const res = await fetch('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: input.prompt,
+      said: input.said,
+      instead: input.instead ?? '',
+      verdict: input.verdict ?? 'down',
+    }),
+  })
+  if (!res.ok) throw new Error(`feedback failed: ${res.status}`)
+  return res.json()
+}

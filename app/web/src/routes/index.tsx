@@ -1,9 +1,10 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import {
   getStats,
   photoUrl,
   resetConversation,
+  sendCorrection,
   sendMessage,
   type Memory,
   type Stats,
@@ -11,7 +12,45 @@ import {
 
 export const Route = createFileRoute('/')({ component: Chat })
 
-type Turn = { role: 'me' | 'twin'; text: string; via?: string }
+type Turn = { role: 'me' | 'twin'; text: string; via?: string; askedWith?: string }
+
+/** "I'd say it like this" — the rewrite becomes a DPO pair. A thumb alone says
+ *  something was wrong but not what right looks like. */
+function Correction({ prompt, said }: { prompt: string; said: string }) {
+  const [open, setOpen] = useState(false)
+  const [instead, setInstead] = useState('')
+  const [done, setDone] = useState(false)
+
+  if (done) return <div className="meta">saved — this will train the next version</div>
+  if (!open)
+    return (
+      <div className="meta">
+        <button className="linklike" onClick={() => setOpen(true)}>
+          I'd say it differently
+        </button>
+      </div>
+    )
+
+  return (
+    <div className="correction">
+      <textarea
+        value={instead}
+        onChange={(e) => setInstead(e.target.value)}
+        placeholder="how you'd actually say it…"
+        rows={2}
+      />
+      <button
+        disabled={!instead.trim()}
+        onClick={async () => {
+          await sendCorrection({ prompt, said, instead })
+          setDone(true)
+        }}
+      >
+        save
+      </button>
+    </div>
+  )
+}
 
 function Chat() {
   const [turns, setTurns] = useState<Turn[]>([])
@@ -40,7 +79,10 @@ function Chat() {
     setBusy(true)
     try {
       const res = await sendMessage(message)
-      setTurns((t) => [...t, { role: 'twin', text: res.reply, via: `${res.backend}/${res.model}` }])
+      setTurns((t) => [
+        ...t,
+        { role: 'twin', text: res.reply, via: `${res.backend}/${res.model}`, askedWith: message },
+      ])
       setMemories(res.memories)
     } catch (err) {
       setError(String(err))
@@ -70,6 +112,9 @@ function Chat() {
           </span>
         )}
         <span className="spacer" />
+        <Link to="/diary">
+          <button>diary</button>
+        </Link>
         <button onClick={clear}>new conversation</button>
       </header>
 
@@ -89,6 +134,9 @@ function Chat() {
                   <div className="bubble">{t.text}</div>
                 </div>
                 {t.via && <div className="meta">via {t.via}</div>}
+                {t.role === 'twin' && t.askedWith && (
+                  <Correction prompt={t.askedWith} said={t.text} />
+                )}
               </div>
             ))}
             {busy && (

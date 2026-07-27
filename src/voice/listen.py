@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .numbers import recover_years
+
 SAMPLE_RATE = 16000  # what both silero-VAD and Whisper want
 FRAME_MS = 32
 FRAME = SAMPLE_RATE * FRAME_MS // 1000
@@ -136,7 +138,10 @@ class Ears:
             no_speech_threshold=0.6,
         )
         text = " ".join(s.text.strip() for s in segments).strip()
-        return text, info.language
+        # Whisper writes spoken years as words, which the date filter cannot see.
+        # Without this, "2017 june me kya kar raha tha" asked aloud reaches
+        # retrieval with no year in it at all.
+        return recover_years(text), info.language
 
 
 def play(pcm: bytes, sample_rate: int = 24000) -> None:
