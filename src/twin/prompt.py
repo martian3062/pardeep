@@ -35,6 +35,7 @@ def build_system_prompt(
     counterpart: str = "",
     guest: bool = False,
     message: str = "",
+    mood_rule: str = "",
 ) -> str:
     parts = [GUEST_PREAMBLE if guest else OWNER_PREAMBLE]
 
@@ -58,6 +59,10 @@ def build_system_prompt(
         rule = language_rule(message)
         if rule:
             rules += f"\n- {rule}"
+    # a camera reading is weak evidence, so it shifts tone and is never asserted
+    # back to him as fact
+    if mood_rule and not guest:
+        rules += f"\n- {mood_rule}"
     parts.append(rules)
 
     if snippets:

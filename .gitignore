@@ -45,3 +45,4 @@ app/web/.output/
 app/web/.nitro/
 app/web/.tanstack/
 app/web/src/routeTree.gen.ts
+app/web/public/mediapipe/

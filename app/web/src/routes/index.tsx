@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
+import { MoodCamera } from '~/MoodCamera'
 import {
   getStats,
   photoUrl,
@@ -112,6 +113,7 @@ function Chat() {
           </span>
         )}
         <span className="spacer" />
+        <MoodCamera />
         <Link to="/diary">
           <button>diary</button>
         </Link>

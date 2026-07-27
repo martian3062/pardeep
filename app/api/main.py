@@ -204,6 +204,45 @@ async def diary_stats() -> dict:
     return st.stats(st.connect())
 
 
+@dataclass
+class MoodRequest:
+    mood: str
+    score: float
+
+
+@post("/api/mood")
+async def mood_report(data: MoodRequest) -> dict:
+    """Receive a mood reading from the browser.
+
+    Only the label and a confidence arrive here. The camera frames are processed
+    by MediaPipe as WASM inside the page and never sent anywhere.
+    """
+    from src.twin import mood as md
+
+    conn = md.connect()
+    md.record(conn, data.mood, data.score)
+    now = md.current(conn)
+    return {
+        "ok": True,
+        "mood": now.label if now else "",
+        "affects_replies": bool(now and now.usable),
+    }
+
+
+@get("/api/mood")
+async def mood_now() -> dict:
+    from src.twin import mood as md
+
+    conn = md.connect()
+    now = md.current(conn)
+    return {
+        "mood": now.label if now else "",
+        "score": round(now.score, 3) if now else 0.0,
+        "fresh": bool(now and now.fresh),
+        "timeline": md.timeline(conn),
+    }
+
+
 app = Litestar(
     route_handlers=[
         chat,
@@ -215,6 +254,8 @@ app = Litestar(
         diary_list,
         diary_stats,
         feedback,
+        mood_report,
+        mood_now,
     ],
     cors_config=cors,
 )

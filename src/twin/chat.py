@@ -42,6 +42,15 @@ class Twin:
     # the twin reported having no classroom photos — while holding several.
     STANDALONE_WORDS = 4
 
+    def _mood_rule(self) -> str:
+        """A recent camera reading, if the browser has sent one. Never blocking."""
+        try:
+            from .mood import connect, current, tone_rule
+
+            return tone_rule(current(connect()))
+        except Exception:
+            return ""
+
     def _retrieval_query(self, message: str) -> str:
         if len(message.split()) >= self.STANDALONE_WORDS:
             return message.strip()
@@ -67,6 +76,7 @@ class Twin:
             counterpart=counterpart,
             guest=self.guest,
             message=message,
+            mood_rule=self._mood_rule(),
         )
         messages = [
             {"role": t.role, "content": t.content} for t in self.history[-HISTORY_TURNS:]
