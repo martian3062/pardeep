@@ -163,7 +163,7 @@ flowchart LR
 | v1 | 832 ex, 3 epochs | r16, α=r | Overfit: answered "Airtel 5g hai ab" when his mother asked if he'd eaten — it had memorized the contact string. English degenerated into "I don't have a choice" ×15. |
 | v2 | 5,453 ex, 2 epochs | r16, α=r | Repetition loops **gone**, coherent English, register right ("hnji", "ni"). Emitted `[media]` — 9.4% of targets contained the placeholder. |
 | v3 | 5,435 ex (targets cleaned) | r16, α=r | Still emitted `[media]`: the placeholder remained in *context* turns. Very terse ("...", "Hello") — α=r under-scales adaptation. |
-| v4 | 5,435 ex (fully cleaned) | r32, α=2r, rsLoRA, NEFTune, eval-tracked | current run |
+| v4 | 5,435 ex (fully cleaned) | r32, α=2r, rsLoRA, NEFTune, eval-tracked | Best checkpoint at epoch 1.43 — eval loss rose after, so overfitting was detected rather than guessed at. |
 
 Two evaluation lessons: single generations at temperature 0.8 cannot rank
 checkpoints (v2 and v3 differ by 18 examples yet looked very different), so
@@ -174,7 +174,12 @@ best checkpoint is selected rather than assumed to be the last.
 
 The VM is **stateless compute only**. Every artifact that *is* the twin — raw data, memory DB,
 persona card, datasets, LoRA adapters, GGUFs — lives on the laptop (`data/`, gitignored) and is
-copied back after every training run. Consequences:
+copied back after every training run. This was exercised for real on 2026-07-27: the VM was wiped
+of everything twin-related — datasets, all four adapters, persona, and the 44GB Sarvam-M base
+weights, 53GB in total — with no loss, because every adapter had already been pulled back. Other
+work sharing that box was untouched.
+
+Consequences:
 
 - **Switch VMs** by changing `TRAIN_VM=` in `.env` — scripts target "any Linux + GPU", not this box.
 - **No VM at all:** Qwen3-4B local twin (full personality, offline) + memory keep working; the
@@ -440,7 +445,8 @@ uv run pytest -q
 - [X] **Phase 2** — SFT dataset (person-aware) + persona card + Mind Model
 - [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on the L4 VM (epoch-2.4 checkpoint kept)
 - [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers
-- [~] Phase 4b — visual memories (7,584 scanned, 6,042 dated, 1,456 worth captioning)
+- [~] **Phase 4b** — visual memories: 7,584 scanned → 6,357 dated → 149 duplicates collapsed →
+  1,307 captioned by Qwen3-VL-4B on the laptop GPU and indexed alongside chats and calls
 - [ ] Phase 5 — voice clone + mic loop
 - [ ] Phase 6 — app: Litestar API + TanStack Start UI + marimo inspector notebooks
 - [ ] Phase 7 — daily diary + DPO active learning
