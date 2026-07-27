@@ -127,6 +127,24 @@ def test_memory_text_without_date_makes_no_claim():
     assert text == "a dog on a roof"
 
 
+def test_a_photo_with_people_says_so():
+    """Regression: asked to describe an old photo the twin said it had none,
+    while holding 1,307. Memes win vague photo queries because their captions are
+    text-dense; a real photograph's is one plain sentence."""
+    text = memory_text(datetime(2017, 8, 12), "camera", "two men beside a locomotive", 2)
+    assert text.startswith("[photo of 2 people]")
+    assert "12 Aug 2017" in text
+
+
+def test_one_person_is_singular():
+    assert memory_text(None, "", "a child smiling", 1).startswith("[photo of 1 person]")
+
+
+def test_an_image_with_no_faces_is_not_labelled():
+    assert not memory_text(None, "", "a meme with text", 0).startswith("[photo of")
+    assert not memory_text(None, "", "not yet scanned", -1).startswith("[photo of")
+
+
 def _write_jpeg_with_exif(path, *, original=None, modified=None):
     """A real JPEG carrying the requested EXIF date tags."""
     from PIL import Image

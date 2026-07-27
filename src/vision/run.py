@@ -112,6 +112,76 @@ def cmd_dedupe(args) -> None:
         console.print(f"[green]Marked {n} duplicate copies[/green]; {remaining} left to caption")
 
 
+def cmd_faces(args) -> None:
+    """Detect faces across the photo archive — locally, nothing uploaded."""
+    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+
+    from . import faces as fc
+
+    conn = sqlite3.connect(DB_PATH)
+    todo = fc.pending(conn, min_rank=args.min_rank)
+    if args.limit:
+        todo = todo[: args.limit]
+    if not todo:
+        console.print("[green]every photo has been scanned for faces[/green]")
+        return
+
+    console.print(f"scanning [bold]{len(todo)}[/bold] photos for faces…")
+    app = fc.analyser()
+    with_faces = 0
+    with Progress(
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("faces", total=len(todo))
+        for photo_id, path in todo:
+            found = fc.detect(app, Path(path))
+            fc.save_faces(conn, photo_id, found)
+            with_faces += bool(found)
+            progress.advance(task)
+
+    total = conn.execute("SELECT count(*) FROM photo_faces").fetchone()[0]
+    console.print(f"[green]{with_faces} photos contain faces[/green]; {total} faces stored")
+
+
+def cmd_people(args) -> None:
+    """Group the detected faces into recurring people."""
+    from . import faces as fc
+
+    conn = sqlite3.connect(DB_PATH)
+    fc.ensure_schema(conn)
+    embeddings = fc.load_embeddings(conn)
+    if not embeddings:
+        console.print("[yellow]no faces yet — run `faces` first[/yellow]")
+        return
+    assignment = fc.cluster(embeddings, threshold=args.threshold)
+    conn.executemany(
+        "UPDATE photo_faces SET person = ? WHERE id = ?",
+        [(f"person_{grp:02d}", fid) for fid, grp in assignment.items()],
+    )
+    conn.commit()
+
+    rows = conn.execute(
+        """SELECT person, count(*) n, count(DISTINCT photo_id) photos,
+                  min(substr(p.taken_at,1,10)) first, max(substr(p.taken_at,1,10)) last
+           FROM photo_faces f JOIN photos p ON p.id = f.photo_id
+           GROUP BY person ORDER BY n DESC LIMIT ?""",
+        (args.show,),
+    ).fetchall()
+    table = Table(title=f"recurring people ({len(set(assignment.values()))} groups)")
+    table.add_column("person")
+    table.add_column("faces", justify="right")
+    table.add_column("photos", justify="right")
+    table.add_column("seen between")
+    for person, n, photos, first, last in rows:
+        table.add_row(person, str(n), str(photos), f"{first} → {last}")
+    console.print(table)
+    console.print("[dim]person_00 appears most — in a personal archive that is usually you[/dim]")
+
+
 def cmd_index(args) -> None:
     from .index_photos import run as index_run
 
@@ -166,6 +236,16 @@ def main() -> None:
     p_dedupe = sub.add_parser("dedupe", help="mark byte-identical copies so each is captioned once")
     p_dedupe.add_argument("--min-rank", type=int, default=2)
     p_dedupe.set_defaults(func=cmd_dedupe)
+
+    p_faces = sub.add_parser("faces", help="detect faces in the archive (local ONNX)")
+    p_faces.add_argument("--limit", type=int)
+    p_faces.add_argument("--min-rank", type=int, default=2)
+    p_faces.set_defaults(func=cmd_faces)
+
+    p_people = sub.add_parser("people", help="group faces into recurring people")
+    p_people.add_argument("--threshold", type=float, default=0.42)
+    p_people.add_argument("--show", type=int, default=12)
+    p_people.set_defaults(func=cmd_people)
 
     p_index = sub.add_parser("index", help="index captioned photos into LanceDB")
     p_index.add_argument(
