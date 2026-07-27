@@ -37,7 +37,7 @@ flowchart TB
         FACTS[Fact + relationship extraction<br/>→ knowledge graph]
     end
 
-    subgraph TRAIN["Phase 3 — Training (own GCP L4 24GB VM, monthly; VM is stateless)"]
+    subgraph TRAIN["Phase 3 — Training (rented cloud GPU, monthly; the box is stateless)"]
         QLORA[Unsloth QLoRA<br/>Sarvam-M 24B + Qwen3-4B/1.7B]
         DPO[TRL DPO monthly<br/>from 👍/👎 feedback]
         GGUF[artifacts scp'd back,<br/>VM copy wiped]
@@ -129,7 +129,7 @@ flowchart LR
 
 Filtering: dedupe, drop media-only + 1-word noise, cap per-contact dominance, 5% eval holdout.
 
-### Phase 3 — Training (own GCP VM — NVIDIA L4 24GB, no rental cost)
+### Phase 3 — Training (a rented cloud GPU, destroyed after each run)
 
 **Hyperparameters** (`training/train_qlora.py`), and why each is set that way —
 several were learned the hard way across four runs:
@@ -150,7 +150,7 @@ several were learned the hard way across four runs:
 
 ```mermaid
 flowchart LR
-    DS[sft.jsonl] -->|scp dataset only| POD[GCP VM · NVIDIA L4 24GB<br/>Unsloth QLoRA r=32<br/>2-3 epochs]
+    DS[sft.jsonl] -->|scp dataset only| POD[rented cloud GPU<br/>Unsloth QLoRA r=32<br/>2-3 epochs]
     POD --> LORA[LoRA adapter] --> MERGE[merge + quantize<br/>GGUF Q4_K_M ≈ 4.7GB]
     MERGE -->|scp back, wipe VM copy| OL[Ollama @ E:\cache\ollama<br/>runs on RTX 4050 6GB]
     FB[feedback pairs<br/>chosen vs rejected] -->|monthly| POD
@@ -540,9 +540,9 @@ uv run pytest -q
 
 | Layer                  | Choice                                                              | Runs on              |
 | ---------------------- | ------------------------------------------------------------------- | -------------------- |
-| Twin brain (PRIMARY)   | **Sarvam-M 24B** — QLoRA fine-tuned + served ~14GB Q4 from VM (30B = serve-only upgrade option) | own GCP VM (L4 24GB) |
+| Twin brain (PRIMARY)   | **Sarvam-M 24B** — QLoRA fine-tuned + served ~14GB Q4 (30B = serve-only upgrade option) | rented cloud GPU |
 | Twin brain (local/offline) | Unsloth QLoRA →**Qwen3-4B** (~2.4GB Q4 — leaves VRAM for Whisper+TTS in live voice loop; bonus 1.7B variant) | trained on VM, runs on RTX 4050 |
-| Preference tuning      | TRL**DPO** (monthly)                                          | own GCP VM           |
+| Preference tuning      | TRL**DPO** (monthly)                                          | rented cloud GPU     |
 | Local serving          | **Ollama**, GGUF Q4_K_M                                       | RTX 4050 6GB         |
 | Reasoning APIs         | **Claude + GPT** (router picks per task; snippets only)       | cloud                |
 | STT                    | **faster-whisper** large-v3 int8 + silero-VAD                 | local GPU            |
@@ -561,7 +561,7 @@ uv run pytest -q
 - [X] **Phase 1** — ingestion: WhatsApp parser, Whisper transcription, unified DB, idempotent CLI
 - [X] **Phase 1b** — call diarization (pyannote) + speaker ID via voice-note enrollment + TTS reference clips
 - [X] **Phase 2** — SFT dataset (person-aware) + persona card + Mind Model
-- [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on the L4 VM (epoch-2.4 checkpoint kept)
+- [X] **Phase 3** — first QLoRA fine-tune: Sarvam-M 24B on a rented GPU (epoch-2.4 checkpoint kept)
 - [X] **Phase 4** — memory: LanceDB + bge-m3, episodic scenes + Mind Model facts, trust tiers,
   hybrid dense+BM25 retrieval with a bounded recency tilt
 - [X] **Phase 4b** — visual memories: 7,584 scanned → 6,357 dated → 149 duplicates collapsed →
@@ -574,5 +574,7 @@ uv run pytest -q
   notebooks, streaming, Diary/Notes tabs
 - [X] **Phase 7** — daily diary (voice or text) → memory, rewrite-based feedback → DPO batches,
   weekly digests. Diary entries are `secret`-tier, invisible to guests
-- [ ] Phase 8 — vision: face ID unlock + expression/mood-aware twin + mood timeline
-- [ ] Phase 9 — guardrails: owner/guest modes, trust-tier memory, PII output guard, audit log
+- [X] **Phase 8** — vision: 950 faces across 312 people linked to photo memories; mood from
+  MediaPipe blendshapes computed in-browser (video never leaves the tab) shifting the twin's tone
+- [X] **Phase 9** — guardrails: trust-tier retrieval, sanitised guest persona, injection refusal,
+  Presidio PII shield with Indian identifiers, full guest audit log. Attacked end-to-end
