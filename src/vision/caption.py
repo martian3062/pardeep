@@ -7,6 +7,7 @@ description rather than a poetic one: these captions are retrieval keys for
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,35 @@ _USELESS_HINTS = {
 # Long side; the vision encoder cost grows with pixel count and 896px is enough
 # to read a signboard while staying inside 6GB.
 MAX_SIDE = 896
+
+# 90 truncated 10% of captions mid-sentence, and always the richest ones: a
+# banner read as "रेल डिस्ट्रिब्यूटर कार्यकारी…" costs several tokens per word, so
+# exactly the captions worth having were the ones cut off.
+MAX_NEW_TOKENS = 140
+
+# The model keeps reporting what a photo does NOT contain. 247 sentences across
+# 931 captions were pure absence — "No other people or readable text are
+# visible." alone appeared 75 times — which adds nothing to a memory and makes
+# unrelated photos embed alike, blunting retrieval.
+_ABSENCE = re.compile(
+    r"""(?:^|(?<=[.!?])\s*)          # sentence start
+        (?:
+            (?:There\s+(?:is|are)\s+)?no\s+(?:other\s+|readable\s+|discernible\s+)?
+            (?:people|person|text|labels?|writing|signage|occasion|words?)\b[^.!?]*
+          | only\s+one\s+person\s+is\s+(?:visible|present)\b[^.!?]*
+          | no\s+\w+\s+or\s+\w+\s+(?:is|are)\s+(?:visible|present|discernible)\b[^.!?]*
+        )
+        [.!?]\s*""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def strip_absence(text: str) -> str:
+    """Drop sentences that only say what is not in the photo."""
+    cleaned = _ABSENCE.sub(" ", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    # if a caption was nothing but absence, keep the original rather than nothing
+    return cleaned if len(cleaned) >= 30 else text.strip()
 
 
 def _load_image(path: Path):
@@ -127,17 +157,43 @@ class Captioner:
             with self.torch.inference_mode():
                 out = self.model.generate(
                     **inputs,
-                    max_new_tokens=90,
+                    max_new_tokens=MAX_NEW_TOKENS,
                     do_sample=False,
                     repetition_penalty=1.05,
                 )
             trimmed = out[0][inputs["input_ids"].shape[1] :]
             text = self.processor.decode(trimmed, skip_special_tokens=True).strip()
-            return text or None
+            return strip_absence(text) if text else None
         except Exception as exc:
             if "out of memory" in str(exc).lower():
                 self.torch.cuda.empty_cache()
             return None
+
+
+def truncated_captions(conn: sqlite3.Connection) -> list[int]:
+    """Captions that stopped mid-sentence against the old token cap."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT id, caption FROM photos WHERE caption IS NOT NULL AND dupe_of IS NULL"
+        )
+        if not row[1].rstrip().endswith((".", "!", "?", '"', "”"))
+    ]
+
+
+def clean_stored_captions(conn: sqlite3.Connection) -> int:
+    """Apply strip_absence to captions already written, without touching the GPU."""
+    rows = conn.execute(
+        "SELECT id, caption FROM photos WHERE caption IS NOT NULL"
+    ).fetchall()
+    changed = 0
+    for photo_id, caption in rows:
+        cleaned = strip_absence(caption)
+        if cleaned != caption:
+            conn.execute("UPDATE photos SET caption = ? WHERE id = ?", (cleaned, photo_id))
+            changed += 1
+    conn.commit()
+    return changed
 
 
 def run(

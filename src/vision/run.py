@@ -87,6 +87,24 @@ def cmd_dates(args) -> None:
             console.print(f"  {row[0]}: {row[1]}")
 
 
+def cmd_polish(args) -> None:
+    """Text-only caption cleanup, and requeue the ones that were cut off."""
+    from .caption import clean_stored_captions, truncated_captions
+
+    with sqlite3.connect(DB_PATH) as conn:
+        n = clean_stored_captions(conn)
+        console.print(f"[green]Cleaned {n} captions[/green] of absence boilerplate")
+        cut = truncated_captions(conn)
+        console.print(f"{len(cut)} captions were truncated by the old token cap")
+        if cut and args.requeue:
+            conn.executemany(
+                "UPDATE photos SET caption = NULL, captioned_at = NULL WHERE id = ?",
+                [(i,) for i in cut],
+            )
+            conn.commit()
+            console.print(f"[yellow]Requeued {len(cut)} for re-captioning[/yellow]")
+
+
 def cmd_dedupe(args) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         n = ph.find_duplicates(conn, min_rank=args.min_rank)
@@ -138,6 +156,12 @@ def main() -> None:
         "--redate", action="store_true", help="recompute all dates from the files, keeping captions"
     )
     p_dates.set_defaults(func=cmd_dates)
+
+    p_polish = sub.add_parser("polish", help="strip absence boilerplate; find truncated captions")
+    p_polish.add_argument(
+        "--requeue", action="store_true", help="clear truncated captions so they are redone"
+    )
+    p_polish.set_defaults(func=cmd_polish)
 
     p_dedupe = sub.add_parser("dedupe", help="mark byte-identical copies so each is captioned once")
     p_dedupe.add_argument("--min-rank", type=int, default=2)
