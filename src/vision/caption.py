@@ -20,9 +20,29 @@ MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 
 PROMPT = (
     "Describe this personal photo in one or two plain sentences. "
-    "Say what is happening, where it looks like, how many people are visible, "
-    "and any readable text or occasion. Do not guess names. Be factual, not poetic."
+    "Say what is happening, what the place looks like, how many people are visible, "
+    "and any readable text or occasion. Do not guess names. Be factual, not poetic. "
+    "Describe only what you can see: never mention the file, the folder, the camera, "
+    "or how the photo was taken, and do not say what is absent."
 )
+
+# Folders named for the device rather than the occasion say nothing a caption
+# should repeat. Passing "camera" as a hint made the model end almost every
+# caption with "as suggested by the 'camera' folder name" — thousands of
+# memories sharing one phrase, which blunts retrieval.
+_USELESS_HINTS = {
+    "camera",
+    "camera roll",
+    "dcim",
+    "sent",
+    "photo",
+    "photos",
+    "images",
+    "pictures",
+    "100nikon",
+    "new folder",
+    "whatsapp images",
+}
 
 # Long side; the vision encoder cost grows with pixel count and 896px is enough
 # to read a signboard while staying inside 6GB.
@@ -83,8 +103,11 @@ class Captioner:
             return None
 
         prompt = PROMPT
-        if hint:
-            prompt += f'\nThe photo came from a folder named "{hint}", which may hint at the occasion.'
+        if hint and hint.strip().lower() not in _USELESS_HINTS:
+            prompt += (
+                f'\nContext, for your understanding only — do not mention it in the caption: '
+                f'this photo was filed under "{hint}".'
+            )
 
         messages = [
             {

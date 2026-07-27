@@ -43,11 +43,14 @@ class Photo:
 
     @property
     def date_trusted(self) -> bool:
-        """mtime on an archive copy is the day it was downloaded, not taken."""
+        """Capture-accurate: good enough to seed a folder's median date."""
         return self.date_source in ("exif", "filename")
 
 
-TRUSTED_SOURCES = ("exif", "filename", "folder_median")
+# Good enough to place a memory on the timeline. Wider than date_trusted: a
+# re-save date is the wrong moment but the right era, whereas mtime is the day
+# the archive was copied and says nothing about the photo at all.
+TRUSTED_SOURCES = ("exif", "filename", "exif_modified", "folder_median")
 
 
 def folder_rank(path: Path) -> int:
@@ -67,37 +70,67 @@ def folder_hint(path: Path, root: Path) -> str:
     return rel.parent.name or rel.parent.as_posix()
 
 
-def exif_datetime(path: Path) -> datetime | None:
-    """Camera timestamp, the most trustworthy date a photo carries."""
+_EXIF_SUBIFD = 0x8769  # ExifOffset — DateTimeOriginal lives here, not in IFD0
+_DATETIME_ORIGINAL = 36867
+_DATETIME_DIGITIZED = 36868
+_DATETIME_MODIFIED = 306  # IFD0 "DateTime": when the file was last WRITTEN
+
+
+def _parse_exif_dt(raw) -> datetime | None:
     try:
-        from PIL import Image, ExifTags
+        return datetime.strptime(str(raw)[:19], "%Y:%m:%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def exif_datetimes(path: Path) -> tuple[datetime | None, datetime | None]:
+    """Return (capture time, file-modified time) from EXIF.
+
+    Image.getexif() returns IFD0 only, whose `DateTime` tag is when the file was
+    last written — a photo re-saved by a frame app or Picasa carries that app's
+    clock. The real capture time is `DateTimeOriginal` in the Exif SubIFD, and
+    reading only IFD0 dated 23 photos up to a year wrong: one shot on
+    2017-01-27 was stamped 2016-01-01 by a re-save on a phone with a reset clock.
+    """
+    try:
+        from PIL import Image
 
         with Image.open(path) as img:
             exif = img.getexif()
             if not exif:
-                return None
-            tags = {ExifTags.TAGS.get(k, k): v for k, v in exif.items()}
-            for key in ("DateTimeOriginal", "DateTime", "DateTimeDigitized"):
-                raw = tags.get(key)
-                if raw:
-                    return datetime.strptime(str(raw)[:19], "%Y:%m:%d %H:%M:%S")
+                return None, None
+            modified = _parse_exif_dt(exif.get(_DATETIME_MODIFIED))
+            try:
+                sub = exif.get_ifd(_EXIF_SUBIFD)
+            except Exception:
+                sub = {}
+            capture = _parse_exif_dt(sub.get(_DATETIME_ORIGINAL)) or _parse_exif_dt(
+                sub.get(_DATETIME_DIGITIZED)
+            )
+            return capture, modified
     except Exception:
-        return None
-    return None
+        return None, None
 
 
 def photo_date(path: Path) -> tuple[datetime | None, str]:
-    """EXIF first, then the filename (IMG-20190421-WA0001), then file mtime.
+    """Best available date, in order of how much it can be believed.
 
-    Returns the source alongside the date because it decides whether the date can
-    be believed: mtime on an archive copy is the day it was pulled off Drive, not
-    the day it was taken. Trusting mtime is what once dated every call memory to
-    the same afternoon.
+    1. EXIF DateTimeOriginal — stamped by the camera at the shutter.
+    2. The filename (IMG_20170127_170925, IMG-20190421-WA0001) — also written at
+       capture, so it beats any timestamp describing when the file was written.
+    3. EXIF DateTime — a re-save, which for an edited photo is the editing app's
+       clock, not the moment being remembered.
+    4. mtime — the day the archive was pulled off Drive. Recorded, never trusted:
+       believing it dated 3,549 photos to this week, the same failure that once
+       landed every call recording on a single afternoon.
     """
-    if dt := exif_datetime(path):
-        return dt, "exif"
+    capture, modified = exif_datetimes(path)
+    if capture:
+        return capture, "exif"
     if dt := timestamp_from_name(path.name):
         return dt, "filename"
+    if modified:
+        return modified, "exif_modified"
     try:
         return datetime.fromtimestamp(path.stat().st_mtime), "mtime"
     except OSError:
@@ -160,6 +193,30 @@ def save(conn: sqlite3.Connection, photos: list[Photo]) -> int:
     )
     conn.commit()
     return cur.rowcount
+
+
+def redate(conn: sqlite3.Connection) -> int:
+    """Recompute every stored date from the files, keeping captions.
+
+    Paths are already in the table, so this re-reads dates without re-walking the
+    archive — the way to apply a fix to the date logic without losing hours of
+    captioning work.
+    """
+    conn.executescript(SCHEMA)
+    rows = conn.execute("SELECT id, path, taken_at, date_source FROM photos").fetchall()
+    changed = 0
+    for photo_id, path_str, old_taken, old_source in rows:
+        taken, source = photo_date(Path(path_str))
+        new_taken = taken.isoformat() if taken else None
+        if (new_taken, source) == (old_taken, old_source):
+            continue
+        conn.execute(
+            "UPDATE photos SET taken_at = ?, date_source = ? WHERE id = ?",
+            (new_taken, source, photo_id),
+        )
+        changed += 1
+    conn.commit()
+    return changed
 
 
 def reset_imputed(conn: sqlite3.Connection) -> int:

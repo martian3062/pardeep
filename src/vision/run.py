@@ -73,6 +73,9 @@ def cmd_caption(args) -> None:
 def cmd_dates(args) -> None:
     """Fill in dates for photos whose only timestamp was the archive copy date."""
     with sqlite3.connect(DB_PATH) as conn:
+        if args.redate:
+            n = ph.redate(conn)
+            console.print(f"[yellow]Recomputed {n} dates from the files[/yellow]")
         if args.redo:
             restored = ph.reset_imputed(conn)
             console.print(f"[yellow]Reset {restored} previously imputed dates to mtime[/yellow]")
@@ -123,6 +126,9 @@ def main() -> None:
     p_dates.add_argument("--min-siblings", type=int, default=3)
     p_dates.add_argument(
         "--redo", action="store_true", help="re-read mtimes and impute again from scratch"
+    )
+    p_dates.add_argument(
+        "--redate", action="store_true", help="recompute all dates from the files, keeping captions"
     )
     p_dates.set_defaults(func=cmd_dates)
 
