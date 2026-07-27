@@ -9,6 +9,7 @@ captioning on a 6GB GPU.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -160,7 +161,7 @@ def scan(roots: list[Path]) -> list[Photo]:
     return photos
 
 
-SCHEMA = """
+_TABLE = """
 CREATE TABLE IF NOT EXISTS photos (
     id INTEGER PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
@@ -169,14 +170,36 @@ CREATE TABLE IF NOT EXISTS photos (
     rank INTEGER NOT NULL,
     folder_hint TEXT,
     caption TEXT,
-    captioned_at TEXT
+    captioned_at TEXT,
+    dupe_of INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_photos_taken ON photos(taken_at);
 """
+
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_photos_taken ON photos(taken_at);
+CREATE INDEX IF NOT EXISTS idx_photos_dupe ON photos(dupe_of);
+"""
+
+# columns added after the table first shipped; CREATE TABLE IF NOT EXISTS will
+# not add them to a database that already holds hours of captioning work
+_ADDED_COLUMNS = {"dupe_of": "INTEGER"}
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(_TABLE)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+    for column, decl in _ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE photos ADD COLUMN {column} {decl}")
+    conn.executescript(_INDEXES)
+    conn.commit()
+
+
+SCHEMA = _TABLE  # kept for callers that only need the table definition
 
 
 def save(conn: sqlite3.Connection, photos: list[Photo]) -> int:
-    conn.executescript(SCHEMA)
+    ensure_schema(conn)
     cur = conn.executemany(
         """INSERT OR IGNORE INTO photos (path, taken_at, date_source, rank, folder_hint)
            VALUES (?, ?, ?, ?, ?)""",
@@ -202,7 +225,7 @@ def redate(conn: sqlite3.Connection) -> int:
     archive — the way to apply a fix to the date logic without losing hours of
     captioning work.
     """
-    conn.executescript(SCHEMA)
+    ensure_schema(conn)
     rows = conn.execute("SELECT id, path, taken_at, date_source FROM photos").fetchall()
     changed = 0
     for photo_id, path_str, old_taken, old_source in rows:
@@ -226,7 +249,7 @@ def reset_imputed(conn: sqlite3.Connection) -> int:
     its own guesses. The original mtime is still on disk, which makes the
     operation repeatable.
     """
-    conn.executescript(SCHEMA)
+    ensure_schema(conn)
     rows = conn.execute(
         "SELECT id, path FROM photos WHERE date_source = 'folder_median'"
     ).fetchall()
@@ -260,7 +283,7 @@ def impute_dates(conn: sqlite3.Connection, min_siblings: int = 3) -> int:
     them, so 777 of 2,642 imputed dates came from an unrelated directory's
     median.
     """
-    conn.executescript(SCHEMA)
+    ensure_schema(conn)
     rows = conn.execute(
         "SELECT id, path, taken_at, date_source FROM photos WHERE taken_at IS NOT NULL"
     ).fetchall()
@@ -289,12 +312,73 @@ def impute_dates(conn: sqlite3.Connection, min_siblings: int = 3) -> int:
     return updated
 
 
+def find_duplicates(conn: sqlite3.Connection, min_rank: int = 2) -> int:
+    """Point byte-identical photos at one canonical copy.
+
+    The archive was assembled from several phone backups, so the same picture
+    shows up as "IMG_x.jpg" and "IMG_x (1).jpg", and again under camera/collage/.
+    149 of 1,456 captionable photos are redundant — 45 minutes of GPU spent
+    describing the same images twice, and a duplicate memory for each.
+
+    Files are grouped by size first and hashed only within colliding groups, so
+    almost nothing is read.
+    """
+    ensure_schema(conn)
+    rows = conn.execute(
+        "SELECT id, path FROM photos WHERE rank >= ? ORDER BY length(path), path",
+        (min_rank,),
+    ).fetchall()
+
+    by_size: dict[int, list[tuple[int, str]]] = {}
+    for photo_id, path_str in rows:
+        try:
+            by_size.setdefault(Path(path_str).stat().st_size, []).append((photo_id, path_str))
+        except OSError:
+            continue
+
+    by_hash: dict[str, list[int]] = {}
+    for items in by_size.values():
+        if len(items) < 2:
+            continue  # a unique size cannot have a byte-identical twin
+        for photo_id, path_str in items:
+            try:
+                digest = hashlib.blake2b(Path(path_str).read_bytes(), digest_size=16).hexdigest()
+            except OSError:
+                continue
+            by_hash.setdefault(digest, []).append(photo_id)
+
+    marked = 0
+    for ids in by_hash.values():
+        if len(ids) < 2:
+            continue
+        canonical, *copies = ids  # shortest path wins: the original, not "x (1)"
+        # carry any caption across so a copy already described is not redone
+        caption = conn.execute(
+            f"SELECT caption FROM photos WHERE id IN ({','.join('?' * len(ids))}) "
+            "AND caption IS NOT NULL LIMIT 1",
+            ids,
+        ).fetchone()
+        if caption:
+            conn.execute(
+                "UPDATE photos SET caption = ? WHERE id = ? AND caption IS NULL",
+                (caption[0], canonical),
+            )
+        conn.executemany(
+            "UPDATE photos SET dupe_of = ? WHERE id = ?", [(canonical, c) for c in copies]
+        )
+        marked += len(copies)
+    conn.commit()
+    return marked
+
+
 def pending_captions(conn: sqlite3.Connection, min_rank: int = 2) -> list[tuple[int, str]]:
-    conn.executescript(SCHEMA)
+    ensure_schema(conn)
     return [
         (row[0], row[1])
         for row in conn.execute(
-            "SELECT id, path FROM photos WHERE caption IS NULL AND rank >= ? ORDER BY taken_at",
+            """SELECT id, path FROM photos
+               WHERE caption IS NULL AND rank >= ? AND dupe_of IS NULL
+               ORDER BY taken_at""",
             (min_rank,),
         )
     ]

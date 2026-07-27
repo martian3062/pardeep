@@ -138,12 +138,16 @@ class MemoryStore:
         kinds: tuple[str, ...] = (),
         max_trust: str = "secret",
         recency_halflife_days: float = 540.0,
+        recency_weight: float = 0.15,
     ) -> list[dict]:
         """Semantic search with a recency tilt.
 
-        Old memories stay reachable — a 2019 conversation is still part of who he
-        is — but when several are similar the newer one should surface first, so
-        relevance is scaled by exponential recency rather than filtered by date.
+        Recency is added, not multiplied. Multiplying scaled a 2017 memory by
+        0.5^6 ≈ 0.014, so nothing from the early archive could ever win — and
+        every photo memory is from those years, which would have made the twin
+        unable to recall a picture at all. As a bounded bonus it does what the
+        tilt was meant to do: break ties between similar memories in favour of
+        the newer one, without burying an old memory that is a far better match.
         """
         table = self._open()
         if table is None:
@@ -164,6 +168,7 @@ class MemoryStore:
         for r in rows:
             age_days = max(0.0, (now - r.get("ts_epoch", now)) / 86400)
             similarity = 1.0 - r.get("_distance", 0.0)
-            r["score"] = similarity * (0.5 ** (age_days / recency_halflife_days))
+            r["similarity"] = similarity
+            r["score"] = similarity + recency_weight * (0.5 ** (age_days / recency_halflife_days))
         rows.sort(key=lambda r: r["score"], reverse=True)
         return rows[:limit]

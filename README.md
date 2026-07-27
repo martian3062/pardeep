@@ -189,7 +189,14 @@ Three memory types in **LanceDB** (embedded, local) with **bge-m3** embeddings (
 - **Semantic** — extracted facts, updated daily
 - **Persona** — the persona card, versioned
 
-Retrieval = dense + BM25 + recency decay. Nightly job consolidates: summarize, dedupe facts, refresh persona.
+Retrieval = dense + BM25 + a recency **tiebreaker**. Nightly job consolidates: summarize, dedupe
+facts, refresh persona.
+
+Recency is added, not multiplied — `similarity + 0.15 × 0.5^(age/540d)`. Multiplying scaled a 2017
+memory by `0.5^6 ≈ 0.014`, so nothing from the early archive could win a search. Since every photo
+memory is from those years, the twin could not have recalled a single picture. As a bounded bonus
+it still does its job: a 2017 photo of a steam-locomotive trip now scores 0.231 against 0.164 for a
+2026 chat about train tickets, where the old form gave the photo 0.003.
 
 #### Phase 4b — Visual memories (photos & videos ARE memories)
 

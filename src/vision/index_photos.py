@@ -36,13 +36,14 @@ def memory_text(taken_at: datetime | None, folder: str, caption: str) -> str:
     return f"{prefix}: {caption}" if prefix else caption
 
 
-def run(db_path: Path, store: MemoryStore | None = None) -> int:
+def run(db_path: Path, store: MemoryStore | None = None, cpu: bool = False) -> int:
     conn = sqlite3.connect(db_path)
-    conn.executescript(ph.SCHEMA)
+    ph.ensure_schema(conn)
 
     rows = conn.execute(
         """SELECT path, taken_at, date_source, folder_hint, caption
-           FROM photos WHERE caption IS NOT NULL ORDER BY taken_at"""
+           FROM photos WHERE caption IS NOT NULL AND dupe_of IS NULL
+           ORDER BY taken_at"""
     ).fetchall()
     conn.close()
 
@@ -50,7 +51,12 @@ def run(db_path: Path, store: MemoryStore | None = None) -> int:
         console.print("[yellow]No captions yet — run `caption` first.[/yellow]")
         return 0
 
-    store = store or MemoryStore()
+    if store is None:
+        # captioning owns the GPU for hours; embedding on the CPU lets memories
+        # be indexed while it runs instead of waiting for it to finish
+        from ..memory.store import Embedder
+
+        store = MemoryStore(embedder=Embedder(device="cpu") if cpu else None)
     memories: list[Memory] = []
     undated = 0
     for path, taken_at, source, folder, caption in rows:

@@ -87,10 +87,17 @@ def cmd_dates(args) -> None:
             console.print(f"  {row[0]}: {row[1]}")
 
 
+def cmd_dedupe(args) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        n = ph.find_duplicates(conn, min_rank=args.min_rank)
+        remaining = len(ph.pending_captions(conn, min_rank=args.min_rank))
+        console.print(f"[green]Marked {n} duplicate copies[/green]; {remaining} left to caption")
+
+
 def cmd_index(args) -> None:
     from .index_photos import run as index_run
 
-    index_run(DB_PATH)
+    index_run(DB_PATH, cpu=args.cpu)
 
 
 def cmd_show(args) -> None:
@@ -132,7 +139,14 @@ def main() -> None:
     )
     p_dates.set_defaults(func=cmd_dates)
 
+    p_dedupe = sub.add_parser("dedupe", help="mark byte-identical copies so each is captioned once")
+    p_dedupe.add_argument("--min-rank", type=int, default=2)
+    p_dedupe.set_defaults(func=cmd_dedupe)
+
     p_index = sub.add_parser("index", help="index captioned photos into LanceDB")
+    p_index.add_argument(
+        "--cpu", action="store_true", help="embed on the CPU (use while captioning holds the GPU)"
+    )
     p_index.set_defaults(func=cmd_index)
 
     p_show = sub.add_parser("show", help="print random captions to spot-check")

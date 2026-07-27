@@ -69,6 +69,9 @@ def ask(
             head += f" · {r['counterpart']}"
         console.print(f"\n[bold]{head}[/bold]  [dim]score {r['score']:.3f}[/dim]")
         console.print(r["text"][:600])
+        # photo memories carry their file path, so a recalled picture can be opened
+        if r["kind"] == "photo" and r.get("conversation_id"):
+            console.print(f"[dim]{r['conversation_id']}[/dim]")
 
 
 @app.command()

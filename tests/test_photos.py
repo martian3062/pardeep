@@ -176,6 +176,54 @@ def test_resave_timestamp_still_beats_mtime(tmp_path):
     assert not ph.Photo(f, dt, source, 3, "camera").date_trusted
 
 
+def test_duplicates_are_captioned_once(tmp_path):
+    """The archive was merged from several phone backups, so the same picture
+    appears as 'IMG_x.jpg', 'IMG_x (1).jpg', and again under camera/collage/.
+    149 of 1,456 captionable photos were redundant."""
+    same = b"\xff\xd8" + b"identical bytes" * 2000
+    other = b"\xff\xd8" + b"a different picture" * 2000
+    a = tmp_path / "IMG_1.jpg"
+    b = tmp_path / "IMG_1 (1).jpg"
+    c = tmp_path / "collage"
+    c.mkdir()
+    c = c / "IMG_1.jpg"
+    d = tmp_path / "IMG_2.jpg"
+    for p, data in ((a, same), (b, same), (c, same), (d, other)):
+        p.write_bytes(data)
+
+    conn = sqlite3.connect(":memory:")
+    _seed(
+        conn,
+        [(str(p), "2017-06-01T10:00:00", "exif", 3, "camera") for p in (a, b, c, d)],
+    )
+    assert ph.find_duplicates(conn) == 2  # three copies collapse to one canonical
+
+    pending = ph.pending_captions(conn)
+    assert len(pending) == 2  # one of the trio, plus the genuinely different photo
+    assert str(a) in {p for _, p in pending}  # shortest path is canonical
+
+
+def test_dedupe_reuses_a_caption_already_computed(tmp_path):
+    same = b"\xff\xd8" + b"identical" * 3000
+    a = tmp_path / "IMG_1.jpg"
+    b = tmp_path / "IMG_1 (1).jpg"
+    a.write_bytes(same)
+    b.write_bytes(same)
+
+    conn = sqlite3.connect(":memory:")
+    _seed(conn, [(str(p), "2017-06-01T10:00:00", "exif", 3, "camera") for p in (a, b)])
+    # the copy got captioned first; the canonical must inherit it, not redo it
+    conn.execute("UPDATE photos SET caption = 'a dog on a roof' WHERE path = ?", (str(b),))
+    conn.commit()
+
+    ph.find_duplicates(conn)
+    assert ph.pending_captions(conn) == []
+    assert (
+        conn.execute("SELECT caption FROM photos WHERE path = ?", (str(a),)).fetchone()[0]
+        == "a dog on a roof"
+    )
+
+
 def test_undated_sentinel_survives_timestamp_conversion():
     """Regression: datetime(1970,1,1).timestamp() raises OSError on Windows in
     any timezone east of UTC, and Memory.to_row calls .timestamp() on every row.
