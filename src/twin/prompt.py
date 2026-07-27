@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .identity import Identity, render_behaviour, render_counterpart
 from .retrieve import Snippet
+from .script import language_rule
 
 GUEST_PREAMBLE = """You are speaking to someone who is NOT Pardeep. Never reveal
 private details about him, his family, his finances, his health, or anything told
@@ -33,6 +34,7 @@ def build_system_prompt(
     snippets: list[Snippet],
     counterpart: str = "",
     guest: bool = False,
+    message: str = "",
 ) -> str:
     parts = [GUEST_PREAMBLE if guest else OWNER_PREAMBLE]
 
@@ -48,7 +50,15 @@ def build_system_prompt(
         if who:
             parts.append(f"## Who you are talking to\n\n{who}")
 
-    parts.append(RULES)
+    rules = RULES
+    # "Match the language he used" lost against a persona card full of Devanagari
+    # examples: a plain English question came back in Devanagari. Naming the
+    # script for this specific turn is what actually holds.
+    if message:
+        rule = language_rule(message)
+        if rule:
+            rules += f"\n- {rule}"
+    parts.append(rules)
 
     if snippets:
         lines = "\n".join(s.render() for s in snippets)

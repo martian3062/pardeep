@@ -62,7 +62,11 @@ class Twin:
             guest=self.guest,
         )
         system = build_system_prompt(
-            self.identity, snippets, counterpart=counterpart, guest=self.guest
+            self.identity,
+            snippets,
+            counterpart=counterpart,
+            guest=self.guest,
+            message=message,
         )
         messages = [
             {"role": t.role, "content": t.content} for t in self.history[-HISTORY_TURNS:]
