@@ -8,6 +8,7 @@ from what has already been picked.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from ..memory.store import MemoryStore
@@ -17,6 +18,24 @@ from .when import parse_time_range
 # rarely needed to answer a question, and every character spent on one memory is
 # one not spent on another.
 SNIPPET_CHARS = 700
+
+
+# "koi photo hai?" is a request for pictures, but a photo caption is one short
+# sentence while a chat memory is a long thread that may say "college" ten times,
+# so on wording alone the conversation wins and the picture never surfaces.
+_WANTS_PHOTO = re.compile(
+    r"\b(photo|photos|pic|pics|picture|pictures|image|images|selfie|album)\b"
+    r"|फोटो|तस्वीर|ਫੋਟੋ|ਤਸਵੀਰ",
+    re.IGNORECASE,
+)
+
+# Enough to lift a genuinely relevant photo past a wordier chat, not enough to
+# surface an irrelevant one.
+PHOTO_INTENT_BOOST = 1.6
+
+
+def wants_photos(query: str) -> bool:
+    return bool(_WANTS_PHOTO.search(query))
 
 
 @dataclass
@@ -96,6 +115,12 @@ def gather(
         rows = store.search(query, limit=limit * 4, max_trust=trust)
     if not rows:
         return []
+
+    if wants_photos(query):
+        for r in rows:
+            if r.get("kind") == "photo":
+                r["score"] *= PHOTO_INTENT_BOOST
+        rows.sort(key=lambda r: r["score"], reverse=True)
     chosen = _diversify(rows, limit, redundancy_penalty)
     return [
         Snippet(

@@ -35,9 +35,16 @@ class Twin:
         self.identity = ident.load()
         self.history: list[Turn] = []
 
+    # A follow-up like "aur?" or "phir kya hua" carries no searchable content and
+    # needs the turn before it. A message that stands on its own does not, and
+    # borrowing context anyway hijacks it: asked about college right after a
+    # question about a 2017 trip, retrieval returned the trip's train photos and
+    # the twin reported having no classroom photos — while holding several.
+    STANDALONE_WORDS = 4
+
     def _retrieval_query(self, message: str) -> str:
-        """Search with a little context: a bare "and then?" retrieves nothing on
-        its own, but carries meaning after the turn before it."""
+        if len(message.split()) >= self.STANDALONE_WORDS:
+            return message.strip()
         recent = [t.content for t in self.history[-2:] if t.role == "user"]
         return " ".join([*recent, message]).strip()
 

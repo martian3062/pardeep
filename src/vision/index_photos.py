@@ -81,6 +81,8 @@ def run(db_path: Path, store: MemoryStore | None = None, cpu: bool = False) -> i
     # duplicate every photo memory already in the store.
     removed = _drop_existing_photos(store)
     added = store.add(memories)
+    # keyword search only sees rows that are in the full-text index
+    store.ensure_fts_index(rebuild=True)
     console.print(
         f"[green]Indexed {added} photo memories[/green] "
         f"({undated} undated" + (f", replaced {removed} existing" if removed else "") + ")"

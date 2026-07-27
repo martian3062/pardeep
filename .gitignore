@@ -40,3 +40,8 @@ venv/
 # OS
 Thumbs.db
 desktop.ini
+node_modules/
+app/web/.output/
+app/web/.nitro/
+app/web/.tanstack/
+app/web/src/routeTree.gen.ts

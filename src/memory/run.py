@@ -40,6 +40,7 @@ def index(
             conn, store, tuple(cfg.get("dataset", {}).get("exclude_sources", ["video"]))
         )
     total += build_facts(store)
+    store.ensure_fts_index(rebuild=True)  # hybrid search needs it to cover the new rows
     console.print(f"[bold green]indexed {total} memories (store now holds {store.count()})[/bold green]")
 
 

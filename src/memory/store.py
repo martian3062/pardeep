@@ -138,17 +138,21 @@ class MemoryStore:
         kinds: tuple[str, ...] = (),
         max_trust: str = "secret",
         recency_halflife_days: float = 540.0,
-        recency_weight: float = 0.15,
+        recency_weight: float = 0.25,
         time_range: tuple[float, float] | None = None,
     ) -> list[dict]:
-        """Semantic search with a recency tilt.
+        """Semantic search with a recency tilt that can only ever nudge.
 
-        Recency is added, not multiplied. Multiplying scaled a 2017 memory by
-        0.5^6 ≈ 0.014, so nothing from the early archive could ever win — and
-        every photo memory is from those years, which would have made the twin
-        unable to recall a picture at all. As a bounded bonus it does what the
-        tilt was meant to do: break ties between similar memories in favour of
-        the newer one, without burying an old memory that is a far better match.
+        Two wrong shapes came before this one. Multiplying similarity by
+        `0.5**(age/halflife)` scaled a 2017 memory to 0.014 of itself, so nothing
+        from the early archive could win and the twin could not recall a photo at
+        all. Adding a flat 0.15 then over-corrected: real similarities here run
+        0.1–0.4, so the bonus was not a tiebreaker but the dominant term, and a
+        chat that merely said "college" beat the actual classroom photograph.
+
+        Scaling by `1 + w·recency` keeps the bonus proportional to how good the
+        match already is. A brand-new memory gains at most 25%, which reorders
+        near-ties and nothing else.
         """
         table = self._open()
         if table is None:
@@ -163,18 +167,82 @@ class MemoryStore:
             lo, hi = time_range
             conditions.append(f"ts_epoch >= {lo} AND ts_epoch < {hi}")
 
+        where = " AND ".join(conditions)
+        fetch = max(limit * 4, 24)
+
         vector = self.embedder.encode([query])[0]
-        rows = (
-            table.search(vector)
-            .where(" AND ".join(conditions), prefilter=True)
-            .limit(limit * 4)
-            .to_list()
-        )
+        dense = table.search(vector).where(where, prefilter=True).limit(fetch).to_list()
+
         now = datetime.now(timezone.utc).timestamp()
+        for r in dense:
+            r["similarity"] = 1.0 - r.get("_distance", 0.0)
+
+        rows = self._fuse(dense, self._keyword_search(table, query, where, fetch))
+
         for r in rows:
             age_days = max(0.0, (now - r.get("ts_epoch", now)) / 86400)
-            similarity = 1.0 - r.get("_distance", 0.0)
-            r["similarity"] = similarity
-            r["score"] = similarity + recency_weight * (0.5 ** (age_days / recency_halflife_days))
+            recency = 0.5 ** (age_days / recency_halflife_days)
+            r["score"] = r["similarity"] * (1.0 + recency_weight * recency)
         rows.sort(key=lambda r: r["score"], reverse=True)
         return rows[:limit]
+
+    def ensure_fts_index(self, rebuild: bool = False) -> bool:
+        """Build the full-text index keyword search needs. Safe to call often."""
+        table = self._open()
+        if table is None:
+            return False
+        try:
+            if rebuild or "text_idx" not in {i.name for i in table.list_indices()}:
+                table.create_fts_index("text", replace=True, use_tantivy=False)
+            return True
+        except Exception:
+            return False
+
+    def _keyword_search(self, table, query: str, where: str, fetch: int) -> list[dict]:
+        """Literal matches, to cover what embeddings miss.
+
+        A Hinglish question buries its subject: in "college classroom ki koi
+        photo hai kya mere paas", the scaffolding outweighs the two words that
+        matter, and the classroom photographs lost to chats that merely said
+        "college". Keyword search finds the word "classroom" regardless.
+        """
+        try:
+            return (
+                table.search(query, query_type="fts")
+                .where(where, prefilter=True)
+                .limit(fetch)
+                .to_list()
+            )
+        except Exception:
+            return []  # no FTS index yet: dense results alone are still valid
+
+    @staticmethod
+    def _fuse(dense: list[dict], keyword: list[dict], k: int = 60) -> list[dict]:
+        """Reciprocal rank fusion: agreement between two rankings beats a strong
+        showing in either one alone."""
+        if not keyword:
+            return dense
+        fused: dict[str, dict] = {}
+        best = max((r["similarity"] for r in dense), default=1.0) or 1.0
+
+        for rank, row in enumerate(dense):
+            key = f"{row.get('timestamp')}|{row.get('text', '')[:80]}"
+            row["_rrf"] = 1.0 / (k + rank + 1)
+            fused[key] = row
+        for rank, row in enumerate(keyword):
+            key = f"{row.get('timestamp')}|{row.get('text', '')[:80]}"
+            bonus = 1.0 / (k + rank + 1)
+            if key in fused:
+                fused[key]["_rrf"] += bonus
+            else:
+                row["_rrf"] = bonus
+                row["similarity"] = 0.0  # dense never saw it; RRF carries it
+                fused[key] = row
+
+        rows = list(fused.values())
+        # map fused rank back onto the similarity scale so downstream recency
+        # weighting and the photo-intent boost keep working unchanged
+        top = max(r["_rrf"] for r in rows)
+        for r in rows:
+            r["similarity"] = max(r.get("similarity", 0.0), best * (r["_rrf"] / top))
+        return rows
