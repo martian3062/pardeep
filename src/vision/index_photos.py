@@ -17,6 +17,12 @@ from . import photos as ph
 
 console = Console()
 
+# Sentinel for photos with no believable date: old enough to sort last, but not
+# the epoch. datetime(1970,1,1).timestamp() raises OSError on Windows in any
+# timezone east of UTC — local midnight maps to a negative time_t the CRT
+# rejects — and Memory.to_row calls .timestamp() on every row.
+UNDATED = datetime(1980, 1, 1)
+
 
 def memory_text(taken_at: datetime | None, folder: str, caption: str) -> str:
     """Compose the retrievable sentence. Undated photos simply omit the date
@@ -57,14 +63,33 @@ def run(db_path: Path, store: MemoryStore | None = None) -> int:
                 text=memory_text(when, folder or "", caption),
                 kind="photo",
                 source="photo",
-                # a photo with no believable date gets the epoch, so recency
-                # weighting ranks it last instead of pretending it is from today
-                timestamp=when or datetime(1970, 1, 1),
+                # no believable date: sort last rather than claim it is recent
+                timestamp=when or UNDATED,
                 conversation_id=str(path),
                 trust="personal",
             )
         )
 
+    # Captioning is incremental, so `index` gets re-run as more photos finish.
+    # MemoryStore.add is a plain append, so without this every re-run would
+    # duplicate every photo memory already in the store.
+    removed = _drop_existing_photos(store)
     added = store.add(memories)
-    console.print(f"[green]Indexed {added} photo memories[/green] ({undated} undated)")
+    console.print(
+        f"[green]Indexed {added} photo memories[/green] "
+        f"({undated} undated" + (f", replaced {removed} existing" if removed else "") + ")"
+    )
     return added
+
+
+def _drop_existing_photos(store: MemoryStore) -> int:
+    """Remove previously indexed photo memories so re-indexing replaces them."""
+    table = store._open()
+    if table is None:
+        return 0
+    try:
+        before = table.count_rows()
+        table.delete("kind = 'photo'")
+        return before - table.count_rows()
+    except Exception:  # older LanceDB without delete(): fall back to appending
+        return 0

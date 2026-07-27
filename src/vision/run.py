@@ -73,8 +73,11 @@ def cmd_caption(args) -> None:
 def cmd_dates(args) -> None:
     """Fill in dates for photos whose only timestamp was the archive copy date."""
     with sqlite3.connect(DB_PATH) as conn:
+        if args.redo:
+            restored = ph.reset_imputed(conn)
+            console.print(f"[yellow]Reset {restored} previously imputed dates to mtime[/yellow]")
         n = ph.impute_dates(conn, min_siblings=args.min_siblings)
-        console.print(f"[green]Imputed {n} dates[/green] from folder medians")
+        console.print(f"[green]Imputed {n} dates[/green] from directory medians")
         for row in conn.execute(
             "SELECT date_source, count(*) FROM photos GROUP BY 1 ORDER BY 2 DESC"
         ):
@@ -118,6 +121,9 @@ def main() -> None:
 
     p_dates = sub.add_parser("dates", help="impute folder-median dates for mtime-only photos")
     p_dates.add_argument("--min-siblings", type=int, default=3)
+    p_dates.add_argument(
+        "--redo", action="store_true", help="re-read mtimes and impute again from scratch"
+    )
     p_dates.set_defaults(func=cmd_dates)
 
     p_index = sub.add_parser("index", help="index captioned photos into LanceDB")

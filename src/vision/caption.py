@@ -17,7 +17,6 @@ from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 console = Console()
 
 MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
-FALLBACK_MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
 
 PROMPT = (
     "Describe this personal photo in one or two plain sentences. "
@@ -48,31 +47,33 @@ class Captioner:
         from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 
         self.torch = torch
+        # the checkpoint is bf16-native; matching it avoids a needless cast and
+        # the overflow risk fp16 carries on vision activations
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         quant = None
         if four_bit:
             quant = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_compute_dtype=dtype,
                 bnb_4bit_use_double_quant=True,
             )
-        try:
-            self.processor = AutoProcessor.from_pretrained(model_id)
-            self.model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                quantization_config=quant,
-                dtype=torch.float16,
-                device_map="cuda:0",
-            )
-            self.model_id = model_id
-        except Exception as exc:
-            if model_id == FALLBACK_MODEL_ID:
-                raise
-            console.print(f"[yellow]{model_id} unavailable ({exc}); using {FALLBACK_MODEL_ID}[/yellow]")
-            self.__init__(FALLBACK_MODEL_ID, four_bit)
-            return
+        # No automatic fallback to a second model. A blanket except here treats
+        # a VRAM error or a dropped connection as "model unavailable" and starts
+        # a fresh multi-GB download of an uncached model — which happened twice
+        # over an already-saturated link before this was removed. Fail loudly and
+        # let the download be driven deliberately.
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = AutoModelForImageTextToText.from_pretrained(
+            model_id,
+            quantization_config=quant,
+            dtype=dtype,
+            device_map="cuda:0",
+        )
+        self.model_id = model_id
         self.model.eval()
-        console.print(f"[green]{self.model_id} loaded ({'4-bit' if four_bit else 'fp16'})[/green]")
+        precision = "4-bit nf4" if four_bit else str(dtype).replace("torch.", "")
+        console.print(f"[green]{self.model_id} loaded ({precision})[/green]")
 
     def caption(self, path: Path, hint: str = "") -> str | None:
         """Caption one photo, or None if the file is unreadable or OOM survives."""

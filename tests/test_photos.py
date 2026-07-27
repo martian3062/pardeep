@@ -57,14 +57,16 @@ def test_impute_dates_uses_folder_median():
     _seed(
         conn,
         [
-            ("a.jpg", "2017-06-01T10:00:00", "exif", 3, "wedding"),
-            ("b.jpg", "2017-06-02T10:00:00", "exif", 3, "wedding"),
-            ("c.jpg", "2017-06-03T10:00:00", "exif", 3, "wedding"),
-            ("d.jpg", "2026-07-27T10:00:00", "mtime", 3, "wedding"),
+            (r"E:\a\wedding\a.jpg", "2017-06-01T10:00:00", "exif", 3, "wedding"),
+            (r"E:\a\wedding\b.jpg", "2017-06-02T10:00:00", "exif", 3, "wedding"),
+            (r"E:\a\wedding\c.jpg", "2017-06-03T10:00:00", "exif", 3, "wedding"),
+            (r"E:\a\wedding\d.jpg", "2026-07-27T10:00:00", "mtime", 3, "wedding"),
         ],
     )
     assert ph.impute_dates(conn) == 1
-    taken, source = conn.execute("SELECT taken_at, date_source FROM photos WHERE path='d.jpg'").fetchone()
+    taken, source = conn.execute(
+        r"SELECT taken_at, date_source FROM photos WHERE path='E:\a\wedding\d.jpg'"
+    ).fetchone()
     assert taken.startswith("2017-06")
     assert source == "folder_median"
 
@@ -74,12 +76,40 @@ def test_impute_skips_folders_without_enough_dated_siblings():
     _seed(
         conn,
         [
-            ("a.jpg", "2017-06-01T10:00:00", "exif", 3, "loose"),
-            ("d.jpg", "2026-07-27T10:00:00", "mtime", 3, "loose"),
+            (r"E:\a\loose\a.jpg", "2017-06-01T10:00:00", "exif", 3, "loose"),
+            (r"E:\a\loose\d.jpg", "2026-07-27T10:00:00", "mtime", 3, "loose"),
         ],
     )
     assert ph.impute_dates(conn) == 0
-    assert conn.execute("SELECT date_source FROM photos WHERE path='d.jpg'").fetchone()[0] == "mtime"
+    assert (
+        conn.execute(r"SELECT date_source FROM photos WHERE path='E:\a\loose\d.jpg'").fetchone()[0]
+        == "mtime"
+    )
+
+
+def test_impute_does_not_merge_same_named_folders_in_different_trees():
+    """Regression: grouping by bare folder name merged nine names that appear in
+    several trees — 'Camera' alone spans 2016-2024 across three directories — and
+    777 of 2,642 imputed dates came from an unrelated directory's median."""
+    conn = sqlite3.connect(":memory:")
+    _seed(
+        conn,
+        [
+            (r"E:\old\Camera\a.jpg", "2016-01-01T10:00:00", "exif", 3, "Camera"),
+            (r"E:\old\Camera\b.jpg", "2016-01-02T10:00:00", "exif", 3, "Camera"),
+            (r"E:\old\Camera\c.jpg", "2016-01-03T10:00:00", "exif", 3, "Camera"),
+            (r"D:\new\Camera\x.jpg", "2024-06-01T10:00:00", "exif", 3, "Camera"),
+            (r"D:\new\Camera\y.jpg", "2024-06-02T10:00:00", "exif", 3, "Camera"),
+            (r"D:\new\Camera\z.jpg", "2024-06-03T10:00:00", "exif", 3, "Camera"),
+            (r"D:\new\Camera\u.jpg", "2026-07-27T10:00:00", "mtime", 3, "Camera"),
+        ],
+    )
+    assert ph.impute_dates(conn) == 1
+    taken = conn.execute(
+        r"SELECT taken_at FROM photos WHERE path='D:\new\Camera\u.jpg'"
+    ).fetchone()[0]
+    # must take its OWN directory's 2024 median, not the 2016 folder's
+    assert taken.startswith("2024-06")
 
 
 def test_memory_text_omits_generic_folder_names():
@@ -95,3 +125,13 @@ def test_memory_text_keeps_meaningful_folder():
 def test_memory_text_without_date_makes_no_claim():
     text = memory_text(None, "camera", "a dog on a roof")
     assert text == "a dog on a roof"
+
+
+def test_undated_sentinel_survives_timestamp_conversion():
+    """Regression: datetime(1970,1,1).timestamp() raises OSError on Windows in
+    any timezone east of UTC, and Memory.to_row calls .timestamp() on every row.
+    165 undated photos would have crashed `index` after ~1,280 rows were written."""
+    from src.vision.index_photos import UNDATED
+
+    assert UNDATED.timestamp() > 0  # would raise OSError for the epoch on IST/Windows
+    assert UNDATED.year < 2010  # still older than any real photo, so it sorts last

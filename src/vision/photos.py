@@ -162,40 +162,72 @@ def save(conn: sqlite3.Connection, photos: list[Photo]) -> int:
     return cur.rowcount
 
 
-def impute_dates(conn: sqlite3.Connection, min_siblings: int = 3) -> int:
-    """Give mtime-only photos the median date of their folder.
+def reset_imputed(conn: sqlite3.Connection) -> int:
+    """Undo a previous imputation by re-reading each file's mtime.
 
-    A folder is usually one period of life — a camera roll from 2017, a wedding
-    album. When neighbours carry real EXIF dates, their median is a far better
-    guess than the day the archive was copied off Drive. Folders without enough
-    dated neighbours keep `date_source='mtime'` and stay out of the timeline.
+    Imputation overwrites taken_at, so re-running it would otherwise compound on
+    its own guesses. The original mtime is still on disk, which makes the
+    operation repeatable.
     """
     conn.executescript(SCHEMA)
-    folders = conn.execute(
-        """SELECT folder_hint, count(*) FROM photos
-           WHERE date_source IN ('exif','filename') AND folder_hint <> ''
-           GROUP BY 1 HAVING count(*) >= ?""",
-        (min_siblings,),
+    rows = conn.execute(
+        "SELECT id, path FROM photos WHERE date_source = 'folder_median'"
+    ).fetchall()
+    restored = 0
+    for photo_id, path_str in rows:
+        try:
+            mtime = datetime.fromtimestamp(Path(path_str).stat().st_mtime)
+        except OSError:
+            continue
+        conn.execute(
+            "UPDATE photos SET taken_at = ?, date_source = 'mtime' WHERE id = ?",
+            (mtime.isoformat(), photo_id),
+        )
+        restored += 1
+    conn.commit()
+    return restored
+
+
+def impute_dates(conn: sqlite3.Connection, min_siblings: int = 3) -> int:
+    """Give mtime-only photos the median date of their containing directory.
+
+    A directory is usually one period of life — a camera roll from 2017, a
+    wedding album. When neighbours carry real EXIF dates, their median is a far
+    better guess than the day the archive was copied off Drive. Directories
+    without enough dated neighbours keep `date_source='mtime'` and stay out of
+    the timeline.
+
+    Grouping is by FULL parent path, not folder name. Nine folder names in this
+    archive appear in several trees at once — "Camera" alone names three
+    different directories spanning 2016 to 2024 — and grouping by name merged
+    them, so 777 of 2,642 imputed dates came from an unrelated directory's
+    median.
+    """
+    conn.executescript(SCHEMA)
+    rows = conn.execute(
+        "SELECT id, path, taken_at, date_source FROM photos WHERE taken_at IS NOT NULL"
     ).fetchall()
 
+    dated: dict[str, list[str]] = {}
+    undated: dict[str, list[int]] = {}
+    for photo_id, path_str, taken_at, source in rows:
+        parent = str(Path(path_str).parent)
+        if source in ("exif", "filename"):
+            dated.setdefault(parent, []).append(taken_at)
+        elif source == "mtime":
+            undated.setdefault(parent, []).append(photo_id)
+
     updated = 0
-    for folder, _ in folders:
-        dates = [
-            r[0]
-            for r in conn.execute(
-                """SELECT taken_at FROM photos
-                   WHERE folder_hint = ? AND date_source IN ('exif','filename')
-                   ORDER BY taken_at""",
-                (folder,),
-            )
-        ]
-        median = dates[len(dates) // 2]
-        cur = conn.execute(
-            """UPDATE photos SET taken_at = ?, date_source = 'folder_median'
-               WHERE folder_hint = ? AND date_source = 'mtime'""",
-            (median, folder),
+    for parent, ids in undated.items():
+        siblings = sorted(dated.get(parent, []))
+        if len(siblings) < min_siblings:
+            continue
+        median = siblings[len(siblings) // 2]
+        conn.executemany(
+            "UPDATE photos SET taken_at = ?, date_source = 'folder_median' WHERE id = ?",
+            [(median, i) for i in ids],
         )
-        updated += cur.rowcount
+        updated += len(ids)
     conn.commit()
     return updated
 
