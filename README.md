@@ -556,6 +556,149 @@ uv run pytest -q
 | Expression / mood      | **MediaPipe** Face Landmarker blendshapes                     | in browser (WASM)    |
 | Guardrails             | **Presidio** PII + trust-tier retrieval + **Llama-Guard-3-1B** | local               |
 
+---
+
+## 6b. Phases 10–14 — the 3D twin: a face you can talk to
+
+The twin can write like him, remember his life, and speak in his voice. What it
+cannot do is *be there*. These phases add a real-time video presence: a
+photorealistic likeness that talks, watches the person it is talking to, reads
+how they feel and what they are actually after, and behaves accordingly.
+
+```mermaid
+flowchart LR
+    subgraph THEM["the person on the other side"]
+        CAM[📷 their camera] --> EMO[expression → emotion]
+        MIC[🎙️ their mic] --> ASR[streaming STT]
+        ASR --> INT[intent: what do they<br/>actually want?]
+    end
+
+    subgraph MIND["the twin, already built"]
+        EMO --> CTX
+        INT --> CTX[context assembly]
+        CTX --> MEM[(memory: chats · calls ·<br/>photos · diary)]
+        MEM --> BRAIN[persona + Mind Model<br/>+ router]
+        BRAIN --> TXT[reply text]
+    end
+
+    subgraph FACE["Phases 10-12 — the face"]
+        TXT --> TTS[cloned voice, streaming]
+        TTS --> DRIVE[audio → visemes +<br/>expression + head pose]
+        DRIVE --> AVA[avatar renderer]
+        AVA --> RTC[WebRTC video out]
+    end
+
+    BRAIN -.emotional register.-> DRIVE
+    EMO -.mirror / adapt.-> DRIVE
+```
+
+### Phase 10 — Find his face in the archive
+
+Nothing works without clean footage of him talking, and the archive holds 506
+videos across 23.5GB that are mostly *not* him — the video experiment in Phase 2
+already showed forwarded entertainment dominating, which is why `exclude_sources:
+[video]` exists. So the first job is the same one Phase 4b did for photos, at
+video rate.
+
+- Sample frames per video, run the Phase 8 face pipeline, match against
+  `person_00` — the identity already established across 203 photos.
+- Keep only *talking* segments: face large enough, roughly frontal, mouth moving,
+  and voice matching the Phase 1b speaker embedding, so the audio and the face
+  belong to the same person.
+- Output a curated clip set with per-clip quality scores.
+
+**Verify:** minutes of usable frontal talking footage, and a manual look at the
+best ten clips. If this yields under ~3 minutes, the avatar track changes — see
+Phase 11.
+
+### Phase 11 — The likeness
+
+Two families of approach, and the honest answer is that the choice depends on
+what Phase 10 finds. Rather than pick now, this phase is a **bake-off on his own
+footage**, judged on likeness and latency.
+
+| approach | what it gives | what it costs |
+| --- | --- | --- |
+| **2D photoreal** — [LivePortrait](https://github.com/KwaiVGI/LivePortrait), [Ditto](https://arxiv.org/pdf/2411.19509), MuseTalk | works from **a single photo**, most photoreal, least uncanny | one viewpoint; head turns are limited |
+| **3D Gaussian head** — [FlashAvatar](https://arxiv.org/pdf/2311.08581) (300fps), [SEGA](https://arxiv.org/pdf/2504.14373) (from one image), [Avat3r](https://arxiv.org/pdf/2505.05672) | true 3D, free viewpoint, relightable | needs more/better footage; heavier to fit |
+
+The 2D track is the fallback that always works — it needs one good photo, and we
+have 203. The 3D track is the goal, and Phase 10's yield decides whether it is
+reachable.
+
+**Verify:** side-by-side against real clips of him. The test is not "does it look
+like a person" but "would someone who knows him recognise him".
+
+### Phase 12 — Real time, or it is not a conversation
+
+Latency is the whole engineering problem. People tolerate roughly 300–500ms
+before a pause reads as awkward, and every stage adds to it.
+
+| stage | budget | how |
+| --- | --- | --- |
+| speech → text | ~200ms | streaming Whisper, partial hypotheses |
+| retrieval + reply | ~400ms | begin retrieval on partials, stream first tokens |
+| text → his voice | ~150ms to first audio | streaming TTS, sentence-at-a-time |
+| audio → face | ~40ms/frame | must hold ≥25fps |
+
+The trick is that these **overlap**: the avatar starts speaking the first
+sentence while the model is still writing the second. Nothing waits for a
+complete reply.
+
+Also needed for it to feel alive rather than transactional: a listening idle
+state (blinks, small head motion), backchannels (*"hmm"*, *"haan"*) while the
+other person talks, and graceful interruption — he interrupts constantly, and a
+twin that cannot be interrupted is not him.
+
+### Phase 13 — Reading the person on the other side
+
+Phase 8 already computes mood from MediaPipe blendshapes in the browser, but it
+reads *him*. Here the same signal is turned outward, and two things are added:
+
+- **Emotion** of the person talking — and, more usefully, *change* in it. Someone
+  becoming uncomfortable matters more than someone being neutral.
+- **Intention** — what they are actually after, which is often not what they
+  said. "Kya kar raha hai" from a close friend at midnight is not a question
+  about his schedule. The Mind Model already encodes how he reads people; this
+  makes that explicit as a small classifier over the conversation so far.
+
+Both feed the same context assembly the text twin already uses, so an emotional
+read can *activate memories* — the person looks upset and has mentioned an exam,
+so exam-related memories weight higher.
+
+### Phase 14 — Behaving like him, not just sounding like him
+
+The pieces exist separately; this makes them one behaviour.
+
+- **Memory activation from perception**, not only from words: what he sees and
+  hears both retrieve.
+- **Register matching** — he is softer with family, blunt with close friends,
+  formal with teachers. The Mind Model has this per-person; the avatar's
+  *delivery* should follow it too, not just the words.
+- **His own intention** — a twin that only answers is a search box with a face.
+  The Mind Model's motivations and recurring concerns give it things it wants to
+  raise, which is what makes a conversation feel two-sided.
+
+### The honest constraints
+
+**Hardware is the binding one.** Streaming STT, an LLM, streaming TTS and a face
+renderer at 25fps do not fit together on a 6GB laptop GPU. Realistically this
+splits: perception and rendering local, generation remote — or the whole loop on
+a rented 24GB GPU during a call. Cost and latency both need measuring before
+committing to a design.
+
+**Provenance is not optional.** A photorealistic talking likeness of a real
+person is precisely the technology used for fraud, and the person most exposed by
+a good replica of him is him. Every generated frame should carry an invisible
+watermark and every session an entry in the Phase 9 audit log, so he can always
+demonstrate what his twin did and did not say. This is cheap to build in now and
+almost impossible to add convincingly later.
+
+**Phase 10 gates everything.** If the archive does not contain enough of him
+talking to camera, the 3D track is out and the honest answer is a 2D avatar from
+a single photo — which is a good result, just a different one. That is a fact to
+discover, not to assume.
+
 ## 7. Status
 
 - [X] **Phase 1** — ingestion: WhatsApp parser, Whisper transcription, unified DB, idempotent CLI
@@ -576,5 +719,10 @@ uv run pytest -q
   weekly digests. Diary entries are `secret`-tier, invisible to guests
 - [X] **Phase 8** — vision: 950 faces across 312 people linked to photo memories; mood from
   MediaPipe blendshapes computed in-browser (video never leaves the tab) shifting the twin's tone
+- [ ] **Phase 10** — find his face in 506 archive videos (gates everything below)
+- [ ] **Phase 11** — the likeness: 2D photoreal vs 3D Gaussian head, bake-off on his own footage
+- [ ] **Phase 12** — real-time loop: streaming STT → reply → voice → face, overlapped under ~800ms
+- [ ] **Phase 13** — read the other person: emotion change + actual intention
+- [ ] **Phase 14** — behave like him: perception-driven memory, per-person register, own intentions
 - [X] **Phase 9** — guardrails: trust-tier retrieval, sanitised guest persona, injection refusal,
   Presidio PII shield with Indian identifiers, full guest audit log. Attacked end-to-end
