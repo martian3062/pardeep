@@ -11,13 +11,17 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import src  # noqa: F401,E402  — pins model caches to E:\cache before torch loads
 
 from litestar import Litestar, get, post  # noqa: E402
 from litestar.config.cors import CORSConfig  # noqa: E402
+from litestar.datastructures import UploadFile  # noqa: E402
+from litestar.enums import MediaType, RequestEncodingType  # noqa: E402
 from litestar.exceptions import NotFoundException  # noqa: E402
+from litestar.params import Body  # noqa: E402
 from litestar.response import File  # noqa: E402
 
 from src.twin.chat import Twin  # noqa: E402
@@ -229,6 +233,65 @@ async def mood_report(data: MoodRequest) -> dict:
     }
 
 
+@get("/api/record/questions")
+async def record_questions() -> dict:
+    """The session plan, minus anything already answered."""
+    from src.voice import session as ss
+
+    conn = ss.connect()
+    done = ss.answered_ids(conn)
+    plan = [q for q in ss.build_questions(seed=7) if q["id"] not in done]
+    return {"questions": plan, "progress": ss.progress(conn)}
+
+
+@post("/api/record/clip", media_type=MediaType.JSON)
+async def record_clip(
+    data: Annotated[UploadFile, Body(media_type=RequestEncodingType.MULTI_PART)],
+    question_id: str,
+    question: str,
+    lang: str,
+) -> dict:
+    """Receive one recorded answer, measure it, and say immediately if it is bad.
+
+    Quality is judged now rather than after the session, because the archive's
+    fatal flaw — a 48kHz container holding 1.6kHz of real audio — is invisible
+    unless something measures it.
+    """
+    from src.voice import session as ss
+
+    audio = await data.read()
+    conn = ss.connect()
+    clip_id, quality, problem = ss.save_clip(
+        conn, audio, {"id": question_id, "text": question, "lang": lang}
+    )
+    return {
+        "id": clip_id,
+        "accepted": quality.ok,
+        "problem": problem,
+        "seconds": round(quality.seconds, 1),
+        "sample_rate": quality.sample_rate,
+        "bandwidth_hz": round(quality.bandwidth_hz),
+        "rms": round(quality.rms, 4),
+        "progress": ss.progress(conn),
+    }
+
+
+@get("/api/record/progress")
+async def record_progress() -> dict:
+    from src.voice import session as ss
+
+    return ss.progress(ss.connect())
+
+
+@post("/api/record/export")
+async def record_export() -> dict:
+    from src.voice import session as ss
+
+    conn = ss.connect()
+    path = ss.export_manifest(conn)
+    return {"manifest": str(path), "progress": ss.progress(conn)}
+
+
 @get("/api/mood")
 async def mood_now() -> dict:
     from src.twin import mood as md
@@ -256,6 +319,10 @@ app = Litestar(
         feedback,
         mood_report,
         mood_now,
+        record_questions,
+        record_clip,
+        record_progress,
+        record_export,
     ],
     cors_config=cors,
 )

@@ -114,6 +114,9 @@ function Chat() {
         )}
         <span className="spacer" />
         <MoodCamera />
+        <Link to="/record">
+          <button>voice session</button>
+        </Link>
         <Link to="/diary">
           <button>diary</button>
         </Link>

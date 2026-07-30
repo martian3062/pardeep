@@ -58,6 +58,52 @@ export function resetConversation(): Promise<Response> {
   return fetch('/api/reset', { method: 'POST' })
 }
 
+export type Question = { id: string; text: string; lang: string; register: string }
+
+export type SessionProgress = {
+  clips: number
+  minutes: number
+  target_minutes: number
+  pct: number
+  per_language_minutes: Record<string, number>
+  rejected: number
+}
+
+export type ClipResult = {
+  id: number
+  accepted: boolean
+  problem: string
+  seconds: number
+  sample_rate: number
+  bandwidth_hz: number
+  rms: number
+  progress: SessionProgress
+}
+
+export async function getQuestions(): Promise<{
+  questions: Question[]
+  progress: SessionProgress
+}> {
+  const res = await fetch('/api/record/questions')
+  if (!res.ok) throw new Error(`questions failed: ${res.status}`)
+  return res.json()
+}
+
+export async function uploadClip(blob: Blob, q: Question): Promise<ClipResult> {
+  const form = new FormData()
+  form.append('data', blob, `${q.id}.wav`)
+  const params = new URLSearchParams({ question_id: q.id, question: q.text, lang: q.lang })
+  const res = await fetch(`/api/record/clip?${params}`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`upload failed: ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function exportManifest(): Promise<{ manifest: string }> {
+  const res = await fetch('/api/record/export', { method: 'POST' })
+  if (!res.ok) throw new Error(`export failed: ${res.status}`)
+  return res.json()
+}
+
 export type DiaryEntry = {
   id: number
   day: string
