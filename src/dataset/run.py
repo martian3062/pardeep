@@ -10,11 +10,14 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..config import REPO_ROOT, db_path, load_config
+from ..config import REPO_ROOT, db_path, load_config, model_id
 from ..ingest import db as dbm
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
+
+# config.yaml `models.extract` — overridable per invocation with --model
+EXTRACT_MODEL = model_id("extract")
 
 
 @app.command()
@@ -56,7 +59,7 @@ def sft(
 
 @app.command()
 def persona(
-    model: str = typer.Option("claude-opus-4-5", help="Anthropic model for extraction"),
+    model: str = typer.Option(EXTRACT_MODEL, help="Anthropic model for extraction"),
     samples: int = typer.Option(400, help="How many of your messages to analyse"),
 ):
     """Extract the persona card (tone, slang, habits) from your own messages."""
@@ -70,7 +73,7 @@ def persona(
 
 @app.command()
 def mind(
-    model: str = typer.Option("claude-opus-4-5", help="Anthropic model for extraction"),
+    model: str = typer.Option(EXTRACT_MODEL, help="Anthropic model for extraction"),
 ):
     """Extract the Mind Model: values, decisions, per-person styles, interests."""
     from . import mind_model as mm

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import CACHE_ROOT
 from ..config import REPO_ROOT
 
 MEMORY_DIR = REPO_ROOT / "data" / "processed" / "memory"
@@ -56,7 +57,9 @@ class Embedder:
     MAX_TOKENS = 512
 
     def __init__(self, model_name: str = EMBED_MODEL, device: str | None = None):
-        os.environ.setdefault("HF_HOME", r"E:\cache\huggingface")
+        # src/__init__.py already pinned this from ME_TOO_CACHE_ROOT; the setdefault
+        # is only a guard for the case where store.py is imported on its own.
+        os.environ.setdefault("HF_HOME", str(CACHE_ROOT / "huggingface"))
         from sentence_transformers import SentenceTransformer
 
         if device is None:

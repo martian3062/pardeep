@@ -22,18 +22,26 @@ transcribe = ["faster-whisper>=1.1"]
 memory = [
     "lancedb>=0.15",
     "sentence-transformers>=3.0",
+    "pandas>=2.0",  # app/api/main.py reads lancedb tables as dataframes
 ]
 diarize = [
     "pyannote-audio>=3.3",
     "huggingface-hub<1.0",  # pyannote 3.x still uses the removed use_auth_token API
     "torch>=2.4,<2.7",
     "torchaudio>=2.4,<2.7",
+    "speechbrain>=1.0",  # diarize.py loads the wespeaker embedding model through it
 ]
 app = [
     "litestar[standard]>=2.12",
 ]
 voice = [
     "sounddevice>=0.5",  # mic capture and playback
+    "soundfile>=0.12",   # reference.py writes the cleaned reference clips
+]
+train = [
+    # Only the local driver for remote/Kaggle runs. The trainer itself
+    # (unsloth, trl, peft) is installed on the VM by training/setup_vm.sh.
+    "kaggle>=1.6",
 ]
 guard = [
     "presidio-analyzer>=2.2",
@@ -41,6 +49,7 @@ guard = [
 ]
 faces = [
     "insightface>=0.7.3",   # buffalo_l detection + recognition, local ONNX
+    "opencv-python>=4.9",   # faces.py decodes and crops with cv2 directly
     # The GPU build: on CPU the archive scan runs at 0.3 photos/sec (~1 hour).
     # Capped below 1.23 because newer wheels link CUDA 13 (cublasLt64_13.dll)
     # while torch 2.6 ships CUDA 12 — with a 13 wheel the CUDA provider loads,
@@ -61,7 +70,7 @@ package = false
 # every group is default: otherwise `uv run --group X` uninstalls the others,
 # which silently broke the memory index mid-build once
 default-groups = [
-    "dev", "transcribe", "diarize", "memory", "vision", "app", "voice", "faces", "guard",
+    "dev", "transcribe", "diarize", "memory", "vision", "app", "voice", "faces", "guard", "train",
 ]
 
 [[tool.uv.index]]

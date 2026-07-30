@@ -49,6 +49,20 @@ dataset:
   # the store, kept out of training.
   exclude_sources: [video]
 
+# Model ids live here, not in code. Providers retire ids on their own schedule,
+# and a hardcoded one becomes a 404 months later that reads like "the backend is
+# down" rather than "the name changed" — so they belong with the other constants.
+models:
+  # Cloud reply backends (src/twin/router.py). Only ever see the persona card
+  # plus the snippets retrieval already chose.
+  claude: claude-sonnet-5
+  openai: gpt-4.1
+  # Batch identity extraction samples the corpus, so it gets the stronger model.
+  extract: claude-opus-4-5
+  # ElevenLabs voice model — the one path that uploads audio (src/voice/tts.py).
+  tts: eleven_v3
+  ollama_url: http://127.0.0.1:11434
+
 paths:
   db: data/processed/messages.db
   tts_reference_dir: data/processed/tts_reference

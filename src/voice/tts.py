@@ -24,13 +24,17 @@ from typing import Protocol
 
 from dotenv import load_dotenv
 
+from ..config import model_id
+
 API = "https://api.elevenlabs.io/v1"
 VOICE_DIR = Path("data/processed/voice_clone")
 VOICE_ID_FILE = VOICE_DIR / "voice_id.json"
 OUT_DIR = Path("data/processed/voice_out")
 
 # eleven_v3 is the only model in the account that lists Punjabi as well as Hindi.
-MODEL_ID = "eleven_v3"
+# Read from config.yaml so replacing the engine (or the model id, when ElevenLabs
+# retires it) does not require editing this file.
+MODEL_ID = model_id("tts")
 FALLBACK_MODEL_ID = "eleven_multilingual_v2"
 
 

@@ -85,9 +85,15 @@ def _to_out(snippets) -> list[MemoryOut]:
 
 @post("/api/chat")
 async def chat(data: ChatRequest) -> ChatResponse:
-    t = twin()
-    t.guest = data.guest
-    reply = t.reply(data.message, counterpart=data.counterpart, backend=data.backend)
+    # `guest` is passed per call, never assigned onto the shared Twin: two
+    # overlapping requests (laptop owner + phone guest over LAN=1) used to race on
+    # the instance flag, which could serve a guest turn without the injection guard.
+    reply = twin().reply(
+        data.message,
+        counterpart=data.counterpart,
+        backend=data.backend,
+        guest=data.guest,
+    )
     return ChatResponse(
         reply=reply.text,
         backend=reply.backend,
@@ -130,7 +136,10 @@ async def stats() -> dict:
 @post("/api/reset")
 async def reset() -> dict:
     """Forget the conversation, keep the memories."""
-    twin().history.clear()
+    # Both transcripts: owner and guest are held separately, and "reset" from the
+    # UI should not leave a guest's turns behind for the next session to inherit.
+    for transcript in twin().transcripts():
+        transcript.clear()
     return {"ok": True}
 
 

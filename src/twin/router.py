@@ -14,9 +14,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-CLAUDE_MODEL = "claude-sonnet-5"
-OPENAI_MODEL = "gpt-4.1"
-OLLAMA_URL = "http://127.0.0.1:11434"
+from ..config import model_id
+
+# Resolved from config.yaml `models:` so a retired provider id is a one-line edit
+# rather than a code change. Read once at import — these do not change per turn.
+CLAUDE_MODEL = model_id("claude")
+OPENAI_MODEL = model_id("openai")
+OLLAMA_URL = model_id("ollama_url")
 
 # Ollama on this machine holds general-purpose models (granite, gemma, a coder
 # model) that know nothing about him. Serving one as "the twin" would produce
