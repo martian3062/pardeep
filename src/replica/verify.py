@@ -131,6 +131,63 @@ def score_dir(generated: Path, embeddings: np.ndarray | None = None) -> Report:
     return report
 
 
+def contact_sheet(
+    generated: Path,
+    report: Report,
+    ref_dir: Path | None = None,
+    out: Path | None = None,
+) -> Path:
+    """An HTML grid of generations beside real photos — the check ArcFace cannot do.
+
+    buffalo_l aligns and crops the face region, which largely EXCLUDES headwear:
+    a checkpoint can score 0.70 cosine while mangling the dastar's wrap, colour
+    or layering. The number gates the face; only eyes gate the turban. The sheet
+    puts every battery image next to real reference photos so that judgement
+    takes thirty seconds instead of a folder crawl.
+    """
+    from .dataset import REF_DIR
+
+    ref_dir = ref_dir or REF_DIR
+    out = out or REPORT_DIR / "contact_sheet.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    refs = sorted(
+        p for p in ref_dir.iterdir()
+        if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+    )[:6] if ref_dir.exists() else []
+
+    def img(path: Path, label: str, cls: str = "") -> str:
+        return (
+            f'<figure class="{cls}"><img src="{path.resolve().as_uri()}" loading="lazy">'
+            f"<figcaption>{label}</figcaption></figure>"
+        )
+
+    cells = [img(p, "REAL", "real") for p in refs]
+    by_name = {s.file: s for s in report.scores}
+    for p in sorted(generated.iterdir()):
+        if p.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+            continue
+        s = by_name.get(p.name)
+        label = f"{s.similarity:.3f}" if s else "?"
+        cls = "" if (s and s.passes) else "fail"
+        cells.append(img(p, label, cls))
+
+    out.write_text(
+        "<!doctype html><meta charset='utf-8'><title>replica contact sheet</title>"
+        "<style>body{background:#111;color:#ddd;font:13px system-ui;margin:16px}"
+        ".grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}"
+        "figure{margin:0}img{width:100%;border-radius:6px;display:block}"
+        "figcaption{padding:3px 2px;color:#9a9}"
+        ".real img{outline:3px solid #2c5cff}.real figcaption{color:#7af}"
+        ".fail img{outline:3px solid #c0392b}.fail figcaption{color:#f88}</style>"
+        "<h2>Blue = real photos. Judge the dastar and beard here — the similarity "
+        "score cannot see them.</h2>"
+        f"<div class='grid'>{''.join(cells)}</div>",
+        encoding="utf-8",
+    )
+    return out
+
+
 def save(report: Report, name: str = "") -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = name or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -139,6 +196,10 @@ def save(report: Report, name: str = "") -> Path:
         json.dumps(
             {
                 "verdict": report.verdict,
+                "caveat": (
+                    "similarity gates the FACE only — buffalo_l crops out headwear, "
+                    "so the dastar must be judged on the contact sheet, by eye"
+                ),
                 "generated_median": report.generated_median,
                 "calibration": {
                     "median": report.calibration_median,

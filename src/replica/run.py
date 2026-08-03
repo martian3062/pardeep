@@ -82,7 +82,12 @@ def cmd_verify(args) -> None:
     colour = "green" if verdict == "pass" else "red"
     console.print(f"[{colour} bold]{verdict.upper()}[/{colour} bold]")
     out = vf.save(report)
+    sheet = vf.contact_sheet(Path(args.dir), report)
     console.print(f"[dim]report: {out}[/dim]")
+    console.print(
+        f"[bold yellow]open {sheet} and judge the dastar by eye — "
+        "the score cannot see headwear[/bold yellow]"
+    )
 
 
 def main() -> None:

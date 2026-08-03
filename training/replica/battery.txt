@@ -1,0 +1,15 @@
+# The verification battery — one line per prompt, {T} is the trigger token.
+# Every prompt names the dastar deliberately: the ArcFace gate cannot see the
+# turban (buffalo_l crops to the face), so the battery must FORCE it into frame
+# for the human contact-sheet pass, across several colours to prove the LoRA
+# did not weld one colour on.
+photo of {T}, wearing a navy blue dastar, frontal portrait, neutral expression, soft daylight
+photo of {T}, wearing a navy blue dastar, three-quarter view, slight smile, indoor warm light
+photo of {T}, wearing a black dastar, frontal portrait, laughing, outdoor shade
+photo of {T}, wearing a maroon dastar, profile view, neutral expression, window light
+photo of {T}, wearing a black dastar, talking mid-sentence, three-quarter view, office lighting
+photo of {T}, wearing a navy blue dastar, looking slightly down at a laptop, cafe background
+photo of {T}, wearing a grey dastar, frontal, serious expression, overcast daylight
+photo of {T}, wearing a black dastar, head-and-shoulders, grey studio background, formal jacket
+photo of {T}, wearing a navy blue dastar, candid, mid-conversation, evening indoor light
+photo of {T}, wearing a maroon dastar, three-quarter, warm smile, plain wall background
