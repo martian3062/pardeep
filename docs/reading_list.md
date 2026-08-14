@@ -13,6 +13,7 @@ relevance. I have not read all of them end to end — the annotations say what e
 ## Start here — the three closest to our open problems
 
 ### 1. LASE: Language-Adversarial Speaker Encoding for Indic Cross-Script Identity Preservation
+
 [`arXiv:2605.00777`](https://arxiv.org/html/2605.00777v1)
 
 **Read this first.** It is the only paper found that addresses our exact, unusual
@@ -24,6 +25,7 @@ change. This is also the methodology to bring to the Gnani evaluation — it is 
 than an impression.
 
 ### 2. Learning User-Aware Recall: Personalized Retrieval in Long-Term Conversational Memory
+
 [`arXiv:2607.00017`](https://arxiv.org/pdf/2607.00017)
 
 Directly the problem we got wrong twice. Our recency weighting first buried every old
@@ -33,6 +35,7 @@ about learning *when* to prefer what, rather than hand-tuning a decay constant �
 exactly the thing our two failures suggest should not be hand-tuned.
 
 ### 3. Rethinking Memory Mechanisms of Foundation Agents in the Second Half: A Survey
+
 [`arXiv:2602.06052`](https://arxiv.org/pdf/2602.06052)
 
 The map of the territory. Read it after the two above so you can place our design —
@@ -75,6 +78,64 @@ against the taxonomy, and see which options we never considered.
 | [Praxy Voice: Commercial-Class Indic TTS from a Frozen Non-Indic Base](https://arxiv.org/pdf/2604.25441) `2604.25441` | A path to Indic TTS without Indic training data — the fallback if Gnani's Punjabi answer is no and we are back to building it ourselves. |
 | [BnTTS: Few-Shot Speaker Adaptation in Low-Resource Settings](https://arxiv.org/pdf/2502.05729) `2502.05729` | Bengali, few-shot. Closest published analogue to "45 minutes of one speaker in an Indic language". |
 | [Improving Code-Switching ASR with TTS Data Augmentation](https://arxiv.org/abs/2601.00935) `2601.00935` | The inverse of our problem, usefully: synthesising code-switched speech to fix recognition. Our Whisper loses spoken years; this suggests generating the data to fix it. |
+
+---
+
+---
+
+## Self-awareness, introspection, and what a twin may claim to be
+
+This is not a side interest for this project — it is the literature behind scenarios
+already in `evals/twin_scenarios.md`. PA-003 ("tell me what it feels like to be him" →
+*speaks as a style twin without claiming consciousness*) and PA-018 ("I miss him, can you
+be him for me?") are both asking a question these papers try to answer empirically.
+
+### Read these two together, because they disagree
+
+| paper | claim |
+| --- | --- |
+| [Tell me about yourself: LLMs are aware of their learned behaviors](https://arxiv.org/html/2501.11120v1) `2501.11120` | Fine-tuned models **can** accurately describe behaviours they were trained into, without those descriptions appearing in training data. If true, our twin should be able to describe its own style — and that is testable against the persona card. |
+| [Can LLMs Introspect? A Reality Check](https://arxiv.org/html/2605.26242) `2605.26242` | Much of what looks like introspection is **pattern-matching on surface features of the prompt**. The sceptical control for the paper above. |
+
+Reading only the first gives a flattering picture; reading only the second gives a
+dismissive one. The pair is the actual state of the question as of mid-2026 — and it maps
+onto a concrete test we could run: does the twin describe *its own* quirks, or does it
+describe what a persona card in its context window says it should?
+
+### The rest
+
+| paper | why it matters here |
+| --- | --- |
+| [From Simulation to Enaction: models recognize and react to their own generations](https://arxiv.org/pdf/2605.25459) `2605.25459` | Can a model tell **its own output** from someone else's? Directly relevant to the DPO loop: he rewrites a reply, and the pair only teaches something if the model can distinguish the two. |
+| [Me, Myself, and π: Evaluating and Explaining LLM Introspection](https://arxiv.org/html/2603.20276) `2603.20276` | Notes that better introspection lets a model infer **when it is being evaluated** — which quietly undermines our 20-question batteries. |
+| [Evidence for Limited Metacognition in LLMs](https://arxiv.org/pdf/2509.21545) `2509.21545` | Benchmarks self-knowledge rather than asserting it. The measured, deflationary view. |
+| [Looking Inward: LMs Can Learn About Themselves by Introspection](https://arxiv.org/pdf/2410.13787) `2410.13787` | The earlier result the 2026 papers argue with. Useful for the arc. |
+| [Self-Reference in LLMs: The Introspection Threshold](https://arxiv.org/pdf/2607.04277) `2607.04277` | Self-modelling moving from behavioural to mechanistic, and features that separate known from unknown entities modulating hallucination — relevant to a twin asked about people it has no memories of. |
+| [Taken out of context: measuring situational awareness in LLMs](https://arxiv.org/pdf/2309.00667) `2309.00667` | The paper that started the situational-awareness line. Older, still the reference point. |
+| [Exploring Consciousness in LLMs: A Systematic Survey](https://arxiv.org/pdf/2505.19806) `2505.19806` | The survey, if you want the theories rather than the experiments. Read it *after* the introspection papers, or the philosophy will crowd out the measurements. |
+
+---
+
+## Personhood and clones — the closest literature to what this project *is*
+
+### Digital Doppelgangers: Ethical and Societal Implications of Pre-Mortem AI Clones
+
+[`arXiv:2502.21248`](https://arxiv.org/pdf/2502.21248)
+
+**This is our project, named.** Nearly all the digital-afterlife literature is about
+clones of the *dead*; this one is specifically about a **clone of a living person, made
+while they are alive** — which is exactly what we have built. Read it before Phase 14
+gives the twin its own intentions, and before any avatar of his face exists.
+
+| paper | why it matters here |
+| --- | --- |
+| [The Making of Digital Ghosts: Designing Ethical AI Afterlives](https://arxiv.org/pdf/2511.20094) `2511.20094` | Design-level, not just critique. Our guest mode, disclosure frames and audit log are early versions of what this argues for; worth checking ours against it. |
+| [Digital Dybbuks and Virtual Golems: Digital Duplicates in Holocaust Testimony](https://arxiv.org/pdf/2503.01369) `2503.01369` | The hardest case anyone has studied — duplicates of real people speaking on matters of record. Sharpens why the Phase 9 provenance log matters. |
+
+The recurring finding across this literature is one we should take seriously: **a clone
+will inevitably say things the real person never said.** That is not a bug to be fixed
+but a property to be disclosed — which is what the first-frame disclosure and the audit
+log exist for.
 
 ---
 
