@@ -81,8 +81,6 @@ against the taxonomy, and see which options we never considered.
 
 ---
 
----
-
 ## Self-awareness, introspection, and what a twin may claim to be
 
 This is not a side interest for this project — it is the literature behind scenarios
